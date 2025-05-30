@@ -23,19 +23,14 @@ const moveClock = new THREE.Clock(false);
 const gameClock = new THREE.Clock();
 
 function Camera() {
-    // In VR, the camera will be managed by WebXR, but we'll still define a perspective camera
-    // for initial setup and potential non-VR fallback. For an immersive experience,
-    // the perspective camera is more suitable than orthographic.
     const fov = 75;
     const aspect = window.innerWidth / window.innerHeight;
     const near = 0.1;
     const far = 1000;
     const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
 
-    // Initial position for the camera, relative to the player in VR
-    camera.position.set(0, -100, 150); // Adjusted for a better "over-the-shoulder" view in VR
-    camera.lookAt(0, 0, 0); // Look at the origin initially
-
+    // Initial position of the camera (relative to the player in animate function)
+    // This will be overridden by the animate function's camera positioning.
     return camera;
 }
 
@@ -76,14 +71,16 @@ const truckLeftSideTexture = Texture(25, 30, [
 
 function Car(initialTileIndex, direction, color) {
     const car = new THREE.Group();
-    car.position.x = initialTileIndex * tileSize;
-    if (!direction) car.rotation.z = Math.PI;
+    // Adjusted initial position to align with the new scene orientation
+    // Cars now move along the X-axis for "forward" across the lanes
+    car.position.z = initialTileIndex * tileSize; // Car's depth (what was Y) is now Z
+    if (!direction) car.rotation.y = Math.PI; // Rotate around Y for direction
 
     const main = new THREE.Mesh(
         new THREE.BoxGeometry(60, 30, 15),
         new THREE.MeshLambertMaterial({ color, flatShading: true })
     );
-    main.position.z = 12;
+    main.position.y = 12; // Z-axis for height is now Y-axis
     main.castShadow = true;
     main.receiveShadow = true;
     car.add(main);
@@ -113,7 +110,7 @@ function Car(initialTileIndex, direction, color) {
         new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true }), // bottom
     ]);
     cabin.position.x = -6;
-    cabin.position.z = 25.5;
+    cabin.position.y = 25.5; // Z-axis for height is now Y-axis
     cabin.castShadow = true;
     cabin.receiveShadow = true;
     car.add(cabin);
@@ -128,15 +125,16 @@ function Car(initialTileIndex, direction, color) {
 }
 
 function DirectionalLight() {
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1); // White light, full intensity
-    dirLight.position.set(-100, -100, 200);
-    dirLight.up.set(0, 0, 1);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    // Adjust light position to align with the new scene orientation
+    dirLight.position.set(-100, 200, -100); // Y is now up
+    dirLight.up.set(0, 1, 0); // Y-axis is the up vector for the light
     dirLight.castShadow = true;
 
     dirLight.shadow.mapSize.width = 2048;
     dirLight.shadow.mapSize.height = 2048;
 
-    dirLight.shadow.camera.up.set(0, 0, 1);
+    dirLight.shadow.camera.up.set(0, 1, 0); // Y-axis is the up vector for the shadow camera
     dirLight.shadow.camera.left = -400;
     dirLight.shadow.camera.right = 400;
     dirLight.shadow.camera.top = 400;
@@ -149,11 +147,13 @@ function DirectionalLight() {
 
 function Grass(rowIndex) {
     const grass = new THREE.Group();
-    grass.position.y = rowIndex * tileSize;
+    // Grass rows should extend along X, and stack along Z for depth
+    grass.position.x = rowIndex * tileSize; // What was Y (rows) is now X
+    grass.rotation.x = Math.PI / 2; // Rotate to lie flat on XZ plane
 
     const createSection = (color) =>
         new THREE.Mesh(
-            new THREE.BoxGeometry(tilesPerRow * tileSize, tileSize, 3),
+            new THREE.BoxGeometry(tilesPerRow * tileSize, tileSize, 3), // Width, depth, height
             new THREE.MeshLambertMaterial({ color })
         );
 
@@ -162,22 +162,20 @@ function Grass(rowIndex) {
     grass.add(middle);
 
     const left = createSection(0x99c846);
-    left.position.x = -tilesPerRow * tileSize;
+    left.position.z = -tilesPerRow * tileSize; // Adjusted for new orientation
     grass.add(left);
 
     const right = createSection(0x99c846);
-    right.position.x = tilesPerRow * tileSize;
+    right.position.z = tilesPerRow * tileSize; // Adjusted for new orientation
     grass.add(right);
 
     return grass;
 }
 
 function initializeMap() {
-    // Remove all rows
     metadata.length = 0;
     map.remove(...map.children);
 
-    // Add new rows
     for (let rowIndex = 0; rowIndex > -10; rowIndex--) {
         const grass = Grass(rowIndex);
         map.add(grass);
@@ -196,18 +194,15 @@ function addRows() {
 
         if (rowData.type === "forest") {
             const row = Grass(rowIndex);
-
             rowData.trees.forEach(({ tileIndex, height }) => {
-                const three = Tree(tileIndex, height);
-                row.add(three);
+                const tree = Tree(tileIndex, height);
+                row.add(tree);
             });
-
             map.add(row);
         }
 
         if (rowData.type === "car") {
             const row = Road(rowIndex);
-
             rowData.vehicles.forEach((vehicle) => {
                 const car = Car(
                     vehicle.initialTileIndex,
@@ -217,13 +212,11 @@ function addRows() {
                 vehicle.ref = car;
                 row.add(car);
             });
-
             map.add(row);
         }
 
         if (rowData.type === "truck") {
             const row = Road(rowIndex);
-
             rowData.vehicles.forEach((vehicle) => {
                 const truck = Truck(
                     vehicle.initialTileIndex,
@@ -233,7 +226,6 @@ function addRows() {
                 vehicle.ref = truck;
                 row.add(truck);
             });
-
             map.add(row);
         }
     });
@@ -242,14 +234,19 @@ function addRows() {
 function Player() {
     const player = new THREE.Group();
 
+    // Rotate the player group so its "forward" (Y-axis in game logic) aligns with X-axis in Three.js world
+    // and its "up" (Z-axis in game logic) aligns with Y-axis in Three.js world.
+    player.rotation.x = Math.PI / 2; // Rotate to lie flat on XZ plane
+    player.rotation.y = Math.PI / 2; // Rotate to point along X-axis (original Y-axis)
+
     const body = new THREE.Mesh(
-        new THREE.BoxGeometry(15, 15, 20),
+        new THREE.BoxGeometry(15, 15, 20), // Chicken body dimensions
         new THREE.MeshLambertMaterial({
             color: "white",
             flatShading: true,
         })
     );
-    body.position.z = 10;
+    body.position.z = 10; // Z-axis for height (was original Z, now maps to Y after rotation)
     body.castShadow = true;
     body.receiveShadow = true;
     player.add(body);
@@ -261,21 +258,19 @@ function Player() {
             flatShading: true,
         })
     );
-    cap.position.z = 21;
+    cap.position.z = 21; // Z-axis for height
     cap.castShadow = true;
     cap.receiveShadow = true;
     player.add(cap);
 
-    const playerContainer = new THREE.Group();
-    playerContainer.add(player);
-
-    return playerContainer;
+    return player; // player is already a group
 }
 
 function initializePlayer() {
-    player.position.x = 0;
-    player.position.y = 0;
-    player.children[0].position.z = 0; // Reset player's Z position relative to its container
+    // Player's initial position should reflect the new coordinate system
+    player.position.x = 0; // CurrentRow is now X
+    player.position.z = 0; // CurrentTile is now Z
+    player.children[0].position.y = 0; // Local Y position for body
 
     position.currentRow = 0;
     position.currentTile = 0;
@@ -323,7 +318,6 @@ function Renderer() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
 
-    // Enable WebXR
     renderer.xr.enabled = true;
 
     return renderer;
@@ -331,11 +325,13 @@ function Renderer() {
 
 function Road(rowIndex) {
     const road = new THREE.Group();
-    road.position.y = rowIndex * tileSize;
+    // Road rows should extend along X, and stack along Z for depth
+    road.position.x = rowIndex * tileSize; // What was Y (rows) is now X
+    road.rotation.x = Math.PI / 2; // Rotate to lie flat on XZ plane
 
     const createSection = (color) =>
         new THREE.Mesh(
-            new THREE.PlaneGeometry(tilesPerRow * tileSize, tileSize),
+            new THREE.PlaneGeometry(tilesPerRow * tileSize, tileSize), // Width, depth
             new THREE.MeshLambertMaterial({ color })
         );
 
@@ -344,11 +340,11 @@ function Road(rowIndex) {
     road.add(middle);
 
     const left = createSection(0x393d49);
-    left.position.x = -tilesPerRow * tileSize;
+    left.position.z = -tilesPerRow * tileSize; // Adjusted for new orientation
     road.add(left);
 
     const right = createSection(0x393d49);
-    right.position.x = tilesPerRow * tileSize;
+    right.position.z = tilesPerRow * tileSize; // Adjusted for new orientation
     road.add(right);
 
     return road;
@@ -356,7 +352,8 @@ function Road(rowIndex) {
 
 function Tree(tileIndex, height) {
     const tree = new THREE.Group();
-    tree.position.x = tileIndex * tileSize;
+    // Tree position to align with the new scene orientation
+    tree.position.z = tileIndex * tileSize; // TileIndex (original X) is now Z
 
     const trunk = new THREE.Mesh(
         new THREE.BoxGeometry(15, 15, 20),
@@ -365,7 +362,7 @@ function Tree(tileIndex, height) {
             flatShading: true,
         })
     );
-    trunk.position.z = 10;
+    trunk.position.y = 10; // Z-axis for height is now Y-axis
     tree.add(trunk);
 
     const crown = new THREE.Mesh(
@@ -375,7 +372,7 @@ function Tree(tileIndex, height) {
             flatShading: true,
         })
     );
-    crown.position.z = height / 2 + 20;
+    crown.position.y = height / 2 + 20; // Z-axis for height is now Y-axis
     crown.castShadow = true;
     crown.receiveShadow = true;
     tree.add(crown);
@@ -385,8 +382,9 @@ function Tree(tileIndex, height) {
 
 function Truck(initialTileIndex, direction, color) {
     const truck = new THREE.Group();
-    truck.position.x = initialTileIndex * tileSize;
-    if (!direction) truck.rotation.z = Math.PI;
+    // Adjusted initial position to align with the new scene orientation
+    truck.position.z = initialTileIndex * tileSize; // Truck's depth is now Z
+    if (!direction) truck.rotation.y = Math.PI; // Rotate around Y for direction
 
     const cargo = new THREE.Mesh(
         new THREE.BoxGeometry(70, 35, 35),
@@ -396,7 +394,7 @@ function Truck(initialTileIndex, direction, color) {
         })
     );
     cargo.position.x = -15;
-    cargo.position.z = 25;
+    cargo.position.y = 25; // Z-axis for height is now Y-axis
     cargo.castShadow = true;
     cargo.receiveShadow = true;
     truck.add(cargo);
@@ -425,7 +423,7 @@ function Truck(initialTileIndex, direction, color) {
         new THREE.MeshPhongMaterial({ color, flatShading: true }), // bottom
     ]);
     cabin.position.x = 35;
-    cabin.position.z = 20;
+    cabin.position.y = 20; // Z-axis for height is now Y-axis
     cabin.castShadow = true;
     cabin.receiveShadow = true;
 
@@ -452,7 +450,7 @@ function Wheel(x) {
         })
     );
     wheel.position.x = x;
-    wheel.position.z = 6;
+    wheel.position.y = 6; // Z-axis for height is now Y-axis
     return wheel;
 }
 
@@ -601,7 +599,6 @@ function animatePlayer() {
     setPosition(progress);
     setRotation(progress);
 
-    // Once a step has ended
     if (progress >= 1) {
         stepCompleted();
         moveClock.stop();
@@ -609,31 +606,34 @@ function animatePlayer() {
 }
 
 function setPosition(progress) {
-    const startX = position.currentTile * tileSize;
-    const startY = position.currentRow * tileSize;
+    // CurrentRow is now X, CurrentTile is now Z
+    const startX = position.currentRow * tileSize;
+    const startZ = position.currentTile * tileSize; // Z for depth
     let endX = startX;
-    let endY = startY;
+    let endZ = startZ;
 
-    if (movesQueue[0] === "left") endX -= tileSize;
-    if (movesQueue[0] === "right") endX += tileSize;
-    if (movesQueue[0] === "forward") endY += tileSize;
-    if (movesQueue[0] === "backward") endY -= tileSize;
+    // Movement directions are now relative to the new axis system
+    if (movesQueue[0] === "forward") endX += tileSize; // Forward is along X
+    if (movesQueue[0] === "backward") endX -= tileSize;
+    if (movesQueue[0] === "left") endZ -= tileSize; // Left is along Z
+    if (movesQueue[0] === "right") endZ += tileSize;
 
     player.position.x = THREE.MathUtils.lerp(startX, endX, progress);
-    player.position.y = THREE.MathUtils.lerp(startY, endY, progress);
-    player.children[0].position.z = Math.sin(progress * Math.PI) * 8;
+    player.position.z = THREE.MathUtils.lerp(startZ, endZ, progress);
+    player.children[0].position.y = Math.sin(progress * Math.PI) * 8; // Y for jump/height
 }
 
 function setRotation(progress) {
-    let endRotation = 0;
-    if (movesQueue[0] == "forward") endRotation = 0;
-    if (movesQueue[0] == "left") endRotation = Math.PI / 2;
-    if (movesQueue[0] == "right") endRotation = -Math.PI / 2;
-    if (movesQueue[0] == "backward") endRotation = Math.PI;
+    let endRotationY = Math.PI / 2; // Default for player (facing along X-axis initially)
+    if (movesQueue[0] == "forward") endRotationY = Math.PI / 2; // Facing positive X
+    if (movesQueue[0] == "left") endRotationY = Math.PI; // Facing negative Z
+    if (movesQueue[0] == "right") endRotationY = 0; // Facing positive Z
+    if (movesQueue[0] == "backward") endRotationY = -Math.PI / 2; // Facing negative X
 
-    player.children[0].rotation.z = THREE.MathUtils.lerp(
-        player.children[0].rotation.z,
-        endRotation,
+    // Interpolate only the Y-rotation (which is now the "yaw" or horizontal rotation)
+    player.rotation.y = THREE.MathUtils.lerp(
+        player.rotation.y,
+        endRotationY,
         progress
     );
 }
@@ -643,22 +643,23 @@ function animateVehicles() {
 
     metadata.forEach((rowData) => {
         if (rowData.type === "car" || rowData.type === "truck") {
+            // These are now moving along the Z-axis (original X-axis for horizontal movement)
             const beginningOfRow = (minTileIndex - 2) * tileSize;
             const endOfRow = (maxTileIndex + 2) * tileSize;
 
             rowData.vehicles.forEach(({ ref }) => {
                 if (!ref) throw Error("Vehicle reference is missing");
 
-                if (rowData.direction) {
-                    ref.position.x =
-                        ref.position.x > endOfRow
+                if (rowData.direction) { // Original direction was positive X
+                    ref.position.z =
+                        ref.position.z > endOfRow
                             ? beginningOfRow
-                            : ref.position.x + rowData.speed * delta;
-                } else {
-                    ref.position.x =
-                        ref.position.x < beginningOfRow
+                            : ref.position.z + rowData.speed * delta;
+                } else { // Original direction was negative X
+                    ref.position.z =
+                        ref.position.z < beginningOfRow
                             ? endOfRow
-                            : ref.position.x - rowData.speed * delta;
+                            : ref.position.z - rowData.speed * delta;
                 }
             });
         }
@@ -683,7 +684,6 @@ function hitTest() {
                 if (!resultDOM || !finalScoreDOM) return;
                 resultDOM.style.visibility = "visible";
                 finalScoreDOM.innerText = position.currentRow.toString();
-                // Pause game logic on game over
                 renderer.setAnimationLoop(null);
                 if (backgroundMusic) backgroundMusic.pause();
             }
@@ -693,24 +693,29 @@ function hitTest() {
 
 function init() {
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a1a); // Set a background color for the VR scene
+    scene.background = new THREE.Color(0x1a1a1a);
+
+    // Initial rotation of the entire scene to align the game world
+    // X-axis now represents the "forward" progression of the game.
+    // Z-axis represents the "lane" or "side-to-side" movement.
+    // Y-axis is "up".
+    scene.rotation.x = -Math.PI / 2; // Rotate the whole scene so X is forward and Z is sideways, Y is up
 
     player = Player();
-    scene.add(player); // Player is now directly in the scene
+    scene.add(player);
 
     map = new THREE.Group();
     scene.add(map);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Softer ambient light
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
 
     const dirLight = DirectionalLight();
-    // In VR, the directional light can follow the player's general area
-    dirLight.target = player;
-    scene.add(dirLight); // Add directly to scene, not player, for consistent lighting
+    dirLight.target = player; // Still target the player for lighting
+    scene.add(dirLight);
 
     camera = Camera();
-    // Camera is now directly in the scene or managed by WebXR
+    // Camera is not added directly to the player. Its position will be set in animate()
 
     renderer = Renderer();
     document.getElementById("vr-button-container").appendChild(VRButton.createButton(renderer));
@@ -722,26 +727,23 @@ function init() {
     backgroundMusic = document.getElementById("backgroundMusic");
 
 
-    // Event listener for VR session start/end to toggle controls
     renderer.xr.addEventListener('sessionstart', function () {
         console.log('VR Session Started');
-        gameControlsDOM.classList.add('active'); // Show buttons in VR
+        gameControlsDOM.classList.add('active');
         if (backgroundMusic) backgroundMusic.play();
     });
 
     renderer.xr.addEventListener('sessionend', function () {
         console.log('VR Session Ended');
-        gameControlsDOM.classList.remove('active'); // Hide buttons outside VR
+        gameControlsDOM.classList.remove('active');
         if (backgroundMusic) backgroundMusic.pause();
     });
 
-    // Control buttons for movement
     document.getElementById("forward")?.addEventListener("click", () => queueMove("forward"));
     document.getElementById("backward")?.addEventListener("click", () => queueMove("backward"));
     document.getElementById("left")?.addEventListener("click", () => queueMove("left"));
     document.getElementById("right")?.addEventListener("click", () => queueMove("right"));
 
-    // Keyboard controls as fallback/alternative (still useful for development)
     window.addEventListener("keydown", (event) => {
         if (event.key === "ArrowUp") {
             event.preventDefault();
@@ -762,7 +764,6 @@ function init() {
 
     initializeGame();
 
-    // Start the animation loop for WebXR
     renderer.setAnimationLoop(animate);
 }
 
@@ -773,18 +774,12 @@ function initializeGame() {
     if (scoreDOM) scoreDOM.innerText = "0";
     if (resultDOM) resultDOM.style.visibility = "hidden";
     if (backgroundMusic) {
-        backgroundMusic.currentTime = 0; // Rewind music
-        // Only play if in VR or not in VR (if not in VR, it might auto-play,
-        // but explicit play() might be blocked by browser policies if not user-initiated)
+        backgroundMusic.currentTime = 0;
         if (renderer.xr.isPresenting) {
             backgroundMusic.play();
-        } else {
-            // For desktop, usually an initial user interaction is needed to play audio
-            // You might need to add a "Start Game" button for desktop to ensure audio plays
         }
     }
 
-    // Re-enable animation loop on retry
     renderer.setAnimationLoop(animate);
 }
 
@@ -793,24 +788,23 @@ function animate() {
     animatePlayer();
     hitTest();
 
-    // The camera position is now relative to the player's position in the game world.
-    // In VR, the XR camera will handle the head movement, but we want the "game camera"
-    // to follow the player object in the 3D scene.
-    // The player object acts as the "root" for the VR experience.
+    // Position the camera for a more distant, over-the-shoulder view
     const playerWorldPosition = new THREE.Vector3();
-    player.getWorldPosition(playerWorldPosition);
-    
-    // Adjust camera position for a third-person view behind the player.
-    // These values might need tweaking for optimal VR comfort and perspective.
+    player.getWorldPosition(playerWorldPosition); // Get the player's position in world space
+
+    // Now, adjust the camera relative to this world position.
+    // X is forward, Z is side-to-side, Y is up.
+    // For a more distant view, increase the offsets.
     camera.position.set(
-        playerWorldPosition.x,
-        playerWorldPosition.y - 100, // Slightly behind the player
-        playerWorldPosition.z + 150  // Above the player
+        playerWorldPosition.x - 150, // More behind the player (further in negative X)
+        playerWorldPosition.y + 200, // Higher above the player
+        playerWorldPosition.z       // Same Z as player for side-to-side alignment
     );
-    camera.lookAt(playerWorldPosition);
+
+    // Make the camera look at the player's current position
+    camera.lookAt(playerWorldPosition.x, playerWorldPosition.y + 50, playerWorldPosition.z); // Look slightly above the player
 
     renderer.render(scene, camera);
 }
 
-// Initialize the Three.js scene and game
 init();
