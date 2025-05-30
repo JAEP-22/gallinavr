@@ -23,6 +23,11 @@
             z-index: 100;
             display: flex;
             gap: 10px;
+            /* Hide by default, show only in VR or specific conditions */
+            visibility: hidden;
+        }
+        #game-controls.active {
+            visibility: visible;
         }
         #game-controls button {
             background-color: #6366f1; /* Indigo 500 */
@@ -75,6 +80,16 @@
         #result-container button:hover {
             background-color: #059669; /* Emerald 600 */
         }
+        /* Styles from the second CSS block (combined and adjusted) */
+        @import url("https://fonts.googleapis.com/css?family=Press+Start+2P");
+        #score {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 2em;
+            color: white;
+            z-index: 100; /* Ensure score is above other elements */
+        }
     </style>
 </head>
 <body>
@@ -100,6 +115,8 @@
             <button id="retry">Retry</button>
         </div>
     </div>
+    
+    <div id="score">0</div>
 
     <script type="module" src="./script.js"></script>
 </body>

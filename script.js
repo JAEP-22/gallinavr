@@ -1,109 +1,44 @@
 import * as THREE from "https://esm.sh/three";
-import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/webxr/VRButton.js';
+import { VRButton } from "https://esm.sh/three/examples/jsm/webxr/VRButton.js";
 
 const minTileIndex = -8;
 const maxTileIndex = 8;
 const tilesPerRow = maxTileIndex - minTileIndex + 1;
 const tileSize = 42;
 
-// Global variables for 3D UI elements
-let score3D;
-let gameOver3D;
-let finalScore3D;
-let retryButton3D;
+let camera, scene, renderer;
+let player;
+let map;
+let scoreDOM, resultDOM, finalScoreDOM, gameControlsDOM;
+let backgroundMusic;
 
-/**
- * Creates a canvas with text rendered on it, suitable for use as a Three.js texture.
- * @param {string} text - The text to render.
- * @param {number} fontSize - The font size in pixels.
- * @param {string} color - The text color (e.g., '#FFFFFF').
- * @param {string} backgroundColor - The background color (e.g., 'rgba(0, 0, 0, 0.5)').
- * @returns {HTMLCanvasElement} The created canvas element.
- */
-function createTextCanvas(text, fontSize = 48, color = '#FFFFFF', backgroundColor = 'rgba(0, 0, 0, 0.5)') {
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    context.font = `${fontSize}px Inter, sans-serif`;
-    const metrics = context.measureText(text);
-    const textWidth = metrics.width;
-    const textHeight = fontSize;
+// Game state
+const metadata = [];
+const position = {
+    currentRow: 0,
+    currentTile: 0,
+};
+const movesQueue = [];
+const moveClock = new THREE.Clock(false);
+const gameClock = new THREE.Clock();
 
-    canvas.width = textWidth + 20; // Add padding
-    canvas.height = textHeight + 20; // Add padding
-
-    context.font = `${fontSize}px Inter, sans-serif`;
-    context.fillStyle = backgroundColor;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = color;
-    context.fillText(text, 10, fontSize + 5); // Position text with padding
-
-    return canvas;
-}
-
-/**
- * Creates a 3D text mesh using a CanvasTexture.
- * @param {string} text - The text content.
- * @param {THREE.Vector3} position - The position of the mesh.
- * @param {THREE.Vector3} scale - The scale of the mesh.
- * @param {string} color - The text color.
- * @param {string} backgroundColor - The background color of the text plane.
- * @returns {THREE.Mesh} The 3D text mesh.
- */
-function create3DText(text, position, scale, color, backgroundColor) {
-    const canvas = createTextCanvas(text, 48, color, backgroundColor);
-    const texture = new THREE.CanvasTexture(canvas);
-    // Use MeshBasicMaterial for UI elements that don't need lighting
-    const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
-    // Adjust geometry size based on canvas dimensions for consistent scaling
-    const geometry = new THREE.PlaneGeometry(canvas.width / 10, canvas.height / 10);
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(position.x, position.y, position.z);
-    mesh.scale.set(scale.x, scale.y, scale.z);
-    return mesh;
-}
-
-/**
- * Creates a 3D button mesh using a CanvasTexture.
- * @param {string} text - The button text.
- * @param {THREE.Vector3} position - The position of the button.
- * @param {THREE.Vector3} scale - The scale of the button.
- * @param {Function} onClick - The function to call when the button is "clicked".
- * @returns {THREE.Mesh} The 3D button mesh.
- */
-function create3DButton(text, position, scale, onClick) {
-    const canvas = createTextCanvas(text, 48, '#FFFFFF', '#10b981'); // Emerald 500
-    const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
-    const geometry = new THREE.PlaneGeometry(canvas.width / 10, canvas.height / 10);
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(position.x, position.y, position.z);
-    mesh.scale.set(scale.x, scale.y, scale.z);
-
-    // Store the click handler in userData for potential raycasting interaction
-    mesh.userData.onClick = onClick;
-
-    return mesh;
-}
-
-/**
- * Initializes and returns a PerspectiveCamera suitable for VR.
- * @returns {THREE.PerspectiveCamera} The camera object.
- */
 function Camera() {
-    // For VR, we use a PerspectiveCamera
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 0, 0); // Camera will be at the player's logical position in the scene
+    // In VR, the camera will be managed by WebXR, but we'll still define a perspective camera
+    // for initial setup and potential non-VR fallback. For an immersive experience,
+    // the perspective camera is more suitable than orthographic.
+    const fov = 75;
+    const aspect = window.innerWidth / window.innerHeight;
+    const near = 0.1;
+    const far = 1000;
+    const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+
+    // Initial position for the camera, relative to the player in VR
+    camera.position.set(0, -100, 150); // Adjusted for a better "over-the-shoulder" view in VR
+    camera.lookAt(0, 0, 0); // Look at the origin initially
+
     return camera;
 }
 
-/**
- * Creates a CanvasTexture from a given width, height, and array of rectangles.
- * Used for car and truck textures.
- * @param {number} width - The width of the canvas.
- * @param {number} height - The height of the canvas.
- * @param {Array<Object>} rects - An array of rectangle objects {x, y, w, h}.
- * @returns {THREE.CanvasTexture} The created CanvasTexture.
- */
 function Texture(width, height, rects) {
     const canvas = document.createElement("canvas");
     canvas.width = width;
@@ -118,7 +53,6 @@ function Texture(width, height, rects) {
     return new THREE.CanvasTexture(canvas);
 }
 
-// Pre-generate textures for cars and trucks
 const carFrontTexture = new Texture(40, 80, [{ x: 0, y: 10, w: 30, h: 60 }]);
 const carBackTexture = new Texture(40, 80, [{ x: 10, y: 10, w: 30, h: 60 }]);
 const carRightSideTexture = new Texture(110, 40, [
@@ -140,17 +74,10 @@ const truckLeftSideTexture = Texture(25, 30, [
     { x: 15, y: 15, w: 10, h: 10 },
 ]);
 
-/**
- * Creates a 3D car model.
- * @param {number} initialTileIndex - The starting tile index for the car.
- * @param {boolean} direction - True for positive X direction, false for negative.
- * @param {number} color - The color of the car.
- * @returns {THREE.Group} The car group.
- */
 function Car(initialTileIndex, direction, color) {
     const car = new THREE.Group();
     car.position.x = initialTileIndex * tileSize;
-    if (!direction) car.rotation.z = Math.PI; // Rotate 180 degrees if moving left
+    if (!direction) car.rotation.z = Math.PI;
 
     const main = new THREE.Mesh(
         new THREE.BoxGeometry(60, 30, 15),
@@ -200,12 +127,8 @@ function Car(initialTileIndex, direction, color) {
     return car;
 }
 
-/**
- * Creates a directional light for the scene.
- * @returns {THREE.DirectionalLight} The directional light.
- */
 function DirectionalLight() {
-    const dirLight = new THREE.DirectionalLight();
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1); // White light, full intensity
     dirLight.position.set(-100, -100, 200);
     dirLight.up.set(0, 0, 1);
     dirLight.castShadow = true;
@@ -224,11 +147,6 @@ function DirectionalLight() {
     return dirLight;
 }
 
-/**
- * Creates a grass row for the game map.
- * @param {number} rowIndex - The row index for positioning.
- * @returns {THREE.Group} The grass group.
- */
 function Grass(rowIndex) {
     const grass = new THREE.Group();
     grass.position.y = rowIndex * tileSize;
@@ -254,115 +172,124 @@ function Grass(rowIndex) {
     return grass;
 }
 
-const metadata = []; // Stores data about each row (e.g., type, vehicles, trees)
-const map = new THREE.Group(); // The main group holding all map elements
-
-/**
- * Initializes the game map, clearing existing rows and adding initial ones.
- */
 function initializeMap() {
     // Remove all rows
     metadata.length = 0;
     map.remove(...map.children);
 
-    // Add initial grass rows (negative indices to start behind player)
+    // Add new rows
     for (let rowIndex = 0; rowIndex > -10; rowIndex--) {
         const grass = Grass(rowIndex);
         map.add(grass);
     }
-    addRows(); // Add more dynamic rows
+    addRows();
 }
 
-/**
- * Generates and adds new rows to the map based on metadata.
- */
 function addRows() {
-    const newMetadata = generateRows(20); // Generate 20 new rows
+    const newMetadata = generateRows(20);
 
     const startIndex = metadata.length;
-    metadata.push(...newMetadata); // Add new metadata to the global array
+    metadata.push(...newMetadata);
 
     newMetadata.forEach((rowData, index) => {
-        const rowIndex = startIndex + index + 1; // Calculate global row index
+        const rowIndex = startIndex + index + 1;
 
         if (rowData.type === "forest") {
-            const row = Grass(rowIndex); // Create a grass row
+            const row = Grass(rowIndex);
+
             rowData.trees.forEach(({ tileIndex, height }) => {
-                const tree = Tree(tileIndex, height);
-                row.add(tree); // Add trees to the forest row
+                const three = Tree(tileIndex, height);
+                row.add(three);
             });
+
             map.add(row);
         }
 
         if (rowData.type === "car") {
-            const row = Road(rowIndex); // Create a road row
+            const row = Road(rowIndex);
+
             rowData.vehicles.forEach((vehicle) => {
                 const car = Car(
                     vehicle.initialTileIndex,
                     rowData.direction,
                     vehicle.color
                 );
-                vehicle.ref = car; // Store reference to the 3D object in metadata
-                row.add(car); // Add cars to the road row
+                vehicle.ref = car;
+                row.add(car);
             });
+
             map.add(row);
         }
 
         if (rowData.type === "truck") {
-            const row = Road(rowIndex); // Create a road row
+            const row = Road(rowIndex);
+
             rowData.vehicles.forEach((vehicle) => {
                 const truck = Truck(
                     vehicle.initialTileIndex,
                     rowData.direction,
                     vehicle.color
                 );
-                vehicle.ref = truck; // Store reference to the 3D object in metadata
-                row.add(truck); // Add trucks to the road row
+                vehicle.ref = truck;
+                row.add(truck);
             });
+
             map.add(row);
         }
     });
 }
 
-// The player group now represents the logical position of the player in the game world.
-// The actual camera will follow this logical position.
-const player = new THREE.Group();
+function Player() {
+    const player = new THREE.Group();
 
-const position = {
-    currentRow: 0,
-    currentTile: 0,
-};
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(15, 15, 20),
+        new THREE.MeshLambertMaterial({
+            color: "white",
+            flatShading: true,
+        })
+    );
+    body.position.z = 10;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    player.add(body);
 
-const movesQueue = []; // Stores pending player moves
+    const cap = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 4, 2),
+        new THREE.MeshLambertMaterial({
+            color: 0xf0619a,
+            flatShading: true,
+        })
+    );
+    cap.position.z = 21;
+    cap.castShadow = true;
+    cap.receiveShadow = true;
+    player.add(cap);
 
-/**
- * Initializes the player's logical position and clears any pending moves.
- */
+    const playerContainer = new THREE.Group();
+    playerContainer.add(player);
+
+    return playerContainer;
+}
+
 function initializePlayer() {
-    // Set the logical player position
     player.position.x = 0;
     player.position.y = 0;
-    player.position.z = 0;
+    player.children[0].position.z = 0; // Reset player's Z position relative to its container
 
-    // Initialize metadata
     position.currentRow = 0;
     position.currentTile = 0;
 
-    // Clear the moves queue
     movesQueue.length = 0;
 }
 
-/**
- * Adds a move to the queue if it results in a valid position.
- * @param {string} direction - The direction of the move ("forward", "backward", "left", "right").
- */
 function queueMove(direction) {
     const isValidMove = endsUpInValidPosition(
         {
             rowIndex: position.currentRow,
             tileIndex: position.currentTile,
         },
-        [...movesQueue, direction] // Check with current pending moves
+        [...movesQueue, direction]
     );
 
     if (!isValidMove) return;
@@ -370,28 +297,19 @@ function queueMove(direction) {
     movesQueue.push(direction);
 }
 
-/**
- * Completes the current step, updates player position, and score.
- */
 function stepCompleted() {
-    const direction = movesQueue.shift(); // Get the next move from the queue
+    const direction = movesQueue.shift();
 
     if (direction === "forward") position.currentRow += 1;
     if (direction === "backward") position.currentRow -= 1;
     if (direction === "left") position.currentTile -= 1;
     if (direction === "right") position.currentTile += 1;
 
-    // Add new rows if the player is running out of them (approaching the end of the generated map)
     if (position.currentRow > metadata.length - 10) addRows();
 
-    // Update 3D score display
-    updateScore3D();
+    if (scoreDOM) scoreDOM.innerText = position.currentRow.toString();
 }
 
-/**
- * Initializes and returns the WebGLRenderer.
- * @returns {THREE.WebGLRenderer} The renderer object.
- */
 function Renderer() {
     const canvas = document.querySelector("canvas.game");
     if (!canvas) throw new Error("Canvas not found");
@@ -404,16 +322,13 @@ function Renderer() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
-    renderer.xr.enabled = true; // Enable WebXR for VR functionality
+
+    // Enable WebXR
+    renderer.xr.enabled = true;
 
     return renderer;
 }
 
-/**
- * Creates a road row for the game map.
- * @param {number} rowIndex - The row index for positioning.
- * @returns {THREE.Group} The road group.
- */
 function Road(rowIndex) {
     const road = new THREE.Group();
     road.position.y = rowIndex * tileSize;
@@ -439,12 +354,6 @@ function Road(rowIndex) {
     return road;
 }
 
-/**
- * Creates a 3D tree model.
- * @param {number} tileIndex - The tile index for positioning.
- * @param {number} height - The height of the tree crown.
- * @returns {THREE.Group} The tree group.
- */
 function Tree(tileIndex, height) {
     const tree = new THREE.Group();
     tree.position.x = tileIndex * tileSize;
@@ -474,17 +383,10 @@ function Tree(tileIndex, height) {
     return tree;
 }
 
-/**
- * Creates a 3D truck model.
- * @param {number} initialTileIndex - The starting tile index for the truck.
- * @param {boolean} direction - True for positive X direction, false for negative.
- * @param {number} color - The color of the truck.
- * @returns {THREE.Group} The truck group.
- */
 function Truck(initialTileIndex, direction, color) {
     const truck = new THREE.Group();
     truck.position.x = initialTileIndex * tileSize;
-    if (!direction) truck.rotation.z = Math.PI; // Rotate 180 degrees if moving left
+    if (!direction) truck.rotation.z = Math.PI;
 
     const cargo = new THREE.Mesh(
         new THREE.BoxGeometry(70, 35, 35),
@@ -541,11 +443,6 @@ function Truck(initialTileIndex, direction, color) {
     return truck;
 }
 
-/**
- * Creates a 3D wheel model.
- * @param {number} x - The x-position of the wheel relative to its parent.
- * @returns {THREE.Mesh} The wheel mesh.
- */
 function Wheel(x) {
     const wheel = new THREE.Mesh(
         new THREE.BoxGeometry(12, 33, 12),
@@ -559,12 +456,6 @@ function Wheel(x) {
     return wheel;
 }
 
-/**
- * Calculates the final position of the player after a series of moves.
- * @param {Object} currentPosition - The starting position {rowIndex, tileIndex}.
- * @param {Array<string>} moves - An array of move directions.
- * @returns {Object} The final position {rowIndex, tileIndex}.
- */
 function calculateFinalPosition(currentPosition, moves) {
     return moves.reduce((position, direction) => {
         if (direction === "forward")
@@ -591,45 +482,29 @@ function calculateFinalPosition(currentPosition, moves) {
     }, currentPosition);
 }
 
-/**
- * Checks if a series of moves results in a valid position (not hitting obstacles or boundaries).
- * @param {Object} currentPosition - The starting position {rowIndex, tileIndex}.
- * @param {Array<string>} moves - An array of move directions.
- * @returns {boolean} True if the final position is valid, false otherwise.
- */
 function endsUpInValidPosition(currentPosition, moves) {
-    // Calculate where the player would end up after the move
     const finalPosition = calculateFinalPosition(currentPosition, moves);
 
-    // Detect if we hit the edge of the board
     if (
         finalPosition.rowIndex === -1 ||
         finalPosition.tileIndex === minTileIndex - 1 ||
         finalPosition.tileIndex === maxTileIndex + 1
     ) {
-        // Invalid move, ignore move command
         return false;
     }
 
-    // Detect if we hit a tree
     const finalRow = metadata[finalPosition.rowIndex - 1];
     if (
         finalRow &&
         finalRow.type === "forest" &&
         finalRow.trees.some((tree) => tree.tileIndex === finalPosition.tileIndex)
     ) {
-        // Invalid move, ignore move command
         return false;
     }
 
     return true;
 }
 
-/**
- * Generates an array of row metadata.
- * @param {number} amount - The number of rows to generate.
- * @returns {Array<Object>} An array of row metadata objects.
- */
 function generateRows(amount) {
     const rows = [];
     for (let i = 0; i < amount; i++) {
@@ -639,10 +514,6 @@ function generateRows(amount) {
     return rows;
 }
 
-/**
- * Generates metadata for a single random row (car, truck, or forest).
- * @returns {Object} The row metadata.
- */
 function generateRow() {
     const type = randomElement(["car", "truck", "forest"]);
     if (type === "car") return generateCarLaneMetadata();
@@ -650,19 +521,10 @@ function generateRow() {
     return generateForesMetadata();
 }
 
-/**
- * Returns a random element from an array.
- * @param {Array} array - The array to pick from.
- * @returns {*} A random element from the array.
- */
 function randomElement(array) {
     return array[Math.floor(Math.random() * array.length)];
 }
 
-/**
- * Generates metadata for a forest row, including random tree positions and heights.
- * @returns {Object} Forest row metadata.
- */
 function generateForesMetadata() {
     const occupiedTiles = new Set();
     const trees = Array.from({ length: 4 }, () => {
@@ -680,12 +542,8 @@ function generateForesMetadata() {
     return { type: "forest", trees };
 }
 
-/**
- * Generates metadata for a car lane, including car positions, direction, and speed.
- * @returns {Object} Car lane metadata.
- */
 function generateCarLaneMetadata() {
-    const direction = randomElement([true, false]); // true for right, false for left
+    const direction = randomElement([true, false]);
     const speed = randomElement([100, 125, 150]);
 
     const occupiedTiles = new Set();
@@ -695,7 +553,6 @@ function generateCarLaneMetadata() {
         do {
             initialTileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
         } while (occupiedTiles.has(initialTileIndex));
-        // Mark adjacent tiles as occupied to prevent vehicles from spawning too close
         occupiedTiles.add(initialTileIndex - 1);
         occupiedTiles.add(initialTileIndex);
         occupiedTiles.add(initialTileIndex + 1);
@@ -708,10 +565,6 @@ function generateCarLaneMetadata() {
     return { type: "car", direction, speed, vehicles };
 }
 
-/**
- * Generates metadata for a truck lane, including truck positions, direction, and speed.
- * @returns {Object} Truck lane metadata.
- */
 function generateTruckLaneMetadata() {
     const direction = randomElement([true, false]);
     const speed = randomElement([100, 125, 150]);
@@ -723,7 +576,6 @@ function generateTruckLaneMetadata() {
         do {
             initialTileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
         } while (occupiedTiles.has(initialTileIndex));
-        // Mark more adjacent tiles as occupied for trucks
         occupiedTiles.add(initialTileIndex - 2);
         occupiedTiles.add(initialTileIndex - 1);
         occupiedTiles.add(initialTileIndex);
@@ -738,81 +590,74 @@ function generateTruckLaneMetadata() {
     return { type: "truck", direction, speed, vehicles };
 }
 
-const moveClock = new THREE.Clock(false); // Clock to track player movement animation
-
-/**
- * Animates the player's movement based on the moves queue.
- */
 function animatePlayer() {
-    if (!movesQueue.length) return; // No moves pending
+    if (!movesQueue.length) return;
 
-    if (!moveClock.running) moveClock.start(); // Start clock if not running
+    if (!moveClock.running) moveClock.start();
 
     const stepTime = 0.2; // Seconds it takes to take a step
     const progress = Math.min(1, moveClock.getElapsedTime() / stepTime);
 
     setPosition(progress);
-    // setRotation(progress); // Rotation is handled by VR headset in VR, so this is removed
+    setRotation(progress);
 
     // Once a step has ended
     if (progress >= 1) {
-        stepCompleted(); // Process the completed step
-        moveClock.stop(); // Stop the clock
+        stepCompleted();
+        moveClock.stop();
     }
 }
 
-/**
- * Sets the player's (and camera's) position during a movement animation.
- * @param {number} progress - The animation progress (0 to 1).
- */
 function setPosition(progress) {
     const startX = position.currentTile * tileSize;
     const startY = position.currentRow * tileSize;
     let endX = startX;
     let endY = startY;
 
-    // Calculate target position based on the next move in the queue
     if (movesQueue[0] === "left") endX -= tileSize;
     if (movesQueue[0] === "right") endX += tileSize;
     if (movesQueue[0] === "forward") endY += tileSize;
     if (movesQueue[0] === "backward") endY -= tileSize;
 
-    // Linearly interpolate player's logical position
     player.position.x = THREE.MathUtils.lerp(startX, endX, progress);
     player.position.y = THREE.MathUtils.lerp(startY, endY, progress);
-    // player.children[0].position.z = Math.sin(progress * Math.PI) * 8; // Removed player hop for VR, as it can be jarring
+    player.children[0].position.z = Math.sin(progress * Math.PI) * 8;
 }
 
-// `setRotation` function is removed as player rotation in VR is typically handled by the headset's orientation.
+function setRotation(progress) {
+    let endRotation = 0;
+    if (movesQueue[0] == "forward") endRotation = 0;
+    if (movesQueue[0] == "left") endRotation = Math.PI / 2;
+    if (movesQueue[0] == "right") endRotation = -Math.PI / 2;
+    if (movesQueue[0] == "backward") endRotation = Math.PI;
 
-const clock = new THREE.Clock(); // Clock for general animation timing
+    player.children[0].rotation.z = THREE.MathUtils.lerp(
+        player.children[0].rotation.z,
+        endRotation,
+        progress
+    );
+}
 
-/**
- * Animates the movement of vehicles on the map.
- */
 function animateVehicles() {
-    const delta = clock.getDelta(); // Time elapsed since last frame
+    const delta = gameClock.getDelta();
 
-    // Animate cars and trucks
     metadata.forEach((rowData) => {
         if (rowData.type === "car" || rowData.type === "truck") {
-            // Define boundaries for vehicle movement
             const beginningOfRow = (minTileIndex - 2) * tileSize;
             const endOfRow = (maxTileIndex + 2) * tileSize;
 
             rowData.vehicles.forEach(({ ref }) => {
                 if (!ref) throw Error("Vehicle reference is missing");
 
-                // Move vehicle based on its direction and speed
-                if (rowData.direction) { // Moving right
+                if (rowData.direction) {
                     ref.position.x =
                         ref.position.x > endOfRow
-                            ? beginningOfRow // Wrap around if it goes off screen
+                            ? beginningOfRow
                             : ref.position.x + rowData.speed * delta;
-                } else { // Moving left
+                } else {
                     ref.position.x =
                         ref.position.x < beginningOfRow
-                            ? endOfRow // Wrap around if it goes off screen
+                            ? endOfRow
                             : ref.position.x - rowData.speed * delta;
                 }
             });
@@ -820,255 +665,152 @@ function animateVehicles() {
     });
 }
 
-/**
- * Performs collision detection between the player and vehicles.
- */
 function hitTest() {
-    const row = metadata[position.currentRow - 1]; // Get metadata for the current row
+    const row = metadata[position.currentRow - 1];
     if (!row) return;
 
     if (row.type === "car" || row.type === "truck") {
-        // Create a bounding box for the player's current logical position.
-        // In VR, the camera is the player, so its position is player.position.
-        // We add a small offset for height and size for the collision detection.
-        const playerBoundingBox = new THREE.Box3().setFromCenterAndSize(
-            new THREE.Vector3(player.position.x, player.position.y, player.position.z + 10), // Approximate player height
-            new THREE.Vector3(tileSize * 0.5, tileSize * 0.5, 20) // Approximate player size
-        );
+        const playerBoundingBox = new THREE.Box3();
+        playerBoundingBox.setFromObject(player);
 
         row.vehicles.forEach(({ ref }) => {
             if (!ref) throw Error("Vehicle reference is missing");
 
             const vehicleBoundingBox = new THREE.Box3();
-            vehicleBoundingBox.setFromObject(ref); // Get bounding box of the vehicle
+            vehicleBoundingBox.setFromObject(ref);
 
             if (playerBoundingBox.intersectsBox(vehicleBoundingBox)) {
-                showGameOver(); // If collision, show game over
+                if (!resultDOM || !finalScoreDOM) return;
+                resultDOM.style.visibility = "visible";
+                finalScoreDOM.innerText = position.currentRow.toString();
+                // Pause game logic on game over
+                renderer.setAnimationLoop(null);
+                if (backgroundMusic) backgroundMusic.pause();
             }
         });
     }
 }
 
-// Scene setup
-const scene = new THREE.Scene();
-// The camera is now added directly to the scene, and its position will be updated by the player group's position
-const camera = Camera();
-scene.add(camera);
-scene.add(map); // Add the game map to the scene
+function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a1a); // Set a background color for the VR scene
 
-const ambientLight = new THREE.AmbientLight(0x404040); // Soft white light
-scene.add(ambientLight);
+    player = Player();
+    scene.add(player); // Player is now directly in the scene
 
-const dirLight = DirectionalLight();
-// Create a dummy target for the directional light to follow the player's logical position
-dirLight.target = new THREE.Object3D();
-dirLight.target.position.set(0, 0, 0); // Initial target position
-scene.add(dirLight.target);
-scene.add(dirLight);
+    map = new THREE.Group();
+    scene.add(map);
 
-const renderer = Renderer();
-// Add the VR button to the HTML document
-document.getElementById('vr-button-container').appendChild(VRButton.createButton(renderer));
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Softer ambient light
+    scene.add(ambientLight);
+
+    const dirLight = DirectionalLight();
+    // In VR, the directional light can follow the player's general area
+    dirLight.target = player;
+    scene.add(dirLight); // Add directly to scene, not player, for consistent lighting
+
+    camera = Camera();
+    // Camera is now directly in the scene or managed by WebXR
+
+    renderer = Renderer();
+    document.getElementById("vr-button-container").appendChild(VRButton.createButton(renderer));
+
+    scoreDOM = document.getElementById("score");
+    resultDOM = document.getElementById("result-container");
+    finalScoreDOM = document.getElementById("final-score");
+    gameControlsDOM = document.getElementById("game-controls");
+    backgroundMusic = document.getElementById("backgroundMusic");
 
 
-/**
- * Sets up the 3D UI elements for score, game over, and retry.
- */
-function setup3DUI() {
-    // Score display
-    score3D = create3DText(
-        `Score: ${position.currentRow}`,
-        new THREE.Vector3(0, -tileSize * 5, -100), // Position relative to camera (in front, slightly down)
-        new THREE.Vector3(1, 1, 1),
-        '#fca311', // Amber color for score
-        'rgba(0, 0, 0, 0.5)'
-    );
-    camera.add(score3D); // Add score to camera so it moves with the player's view
-    score3D.visible = false; // Initially hidden, only shown in VR
-
-    // Game Over screen (initially hidden)
-    gameOver3D = new THREE.Group();
-    gameOver3D.visible = false;
-    camera.add(gameOver3D); // Add game over group to camera
-
-    const gameOverText = create3DText(
-        'Game Over',
-        new THREE.Vector3(0, -20, -100), // Position in front of camera
-        new THREE.Vector3(1.5, 1.5, 1.5),
-        '#fca311', // Amber color
-        'rgba(0, 0, 0, 0.7)'
-    );
-    gameOver3D.add(gameOverText);
-
-    finalScore3D = create3DText(
-        `Your score: ${position.currentRow}`,
-        new THREE.Vector3(0, -40, -100), // Below game over text
-        new THREE.Vector3(1, 1, 1),
-        '#FFFFFF',
-        'rgba(0, 0, 0, 0.7)'
-    );
-    gameOver3D.add(finalScore3D);
-
-    retryButton3D = create3DButton(
-        'Retry',
-        new THREE.Vector3(0, -60, -100), // Below final score
-        new THREE.Vector3(1, 1, 1),
-        initializeGame // Pass the function to be called on click
-    );
-    gameOver3D.add(retryButton3D);
-
-    // Event listeners for VR session start/end
+    // Event listener for VR session start/end to toggle controls
     renderer.xr.addEventListener('sessionstart', function () {
-        // Hide HTML controls and result container when in VR
-        document.getElementById('game-controls').style.display = 'none';
-        document.getElementById('result-container').style.display = 'none';
-        score3D.visible = true; // Show 3D score in VR
+        console.log('VR Session Started');
+        gameControlsDOM.classList.add('active'); // Show buttons in VR
+        if (backgroundMusic) backgroundMusic.play();
     });
 
     renderer.xr.addEventListener('sessionend', function () {
-        // Show HTML controls when exiting VR
-        document.getElementById('game-controls').style.display = 'flex';
-        // HTML result container might be visible if game over happened in non-VR
-        if (gameOver3D.visible) {
-            document.getElementById('result-container').style.display = 'block';
+        console.log('VR Session Ended');
+        gameControlsDOM.classList.remove('active'); // Hide buttons outside VR
+        if (backgroundMusic) backgroundMusic.pause();
+    });
+
+    // Control buttons for movement
+    document.getElementById("forward")?.addEventListener("click", () => queueMove("forward"));
+    document.getElementById("backward")?.addEventListener("click", () => queueMove("backward"));
+    document.getElementById("left")?.addEventListener("click", () => queueMove("left"));
+    document.getElementById("right")?.addEventListener("click", () => queueMove("right"));
+
+    // Keyboard controls as fallback/alternative (still useful for development)
+    window.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowUp") {
+            event.preventDefault();
+            queueMove("forward");
+        } else if (event.key === "ArrowDown") {
+            event.preventDefault();
+            queueMove("backward");
+        } else if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            queueMove("left");
+        } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            queueMove("right");
         }
-        score3D.visible = false; // Hide 3D score in non-VR
     });
 
-    // Set up the main animation loop for the renderer
-    renderer.setAnimationLoop(function () {
-        // Update camera position to follow the logical player position
-        camera.position.x = player.position.x;
-        camera.position.y = player.position.y;
-        camera.position.z = player.position.z + 50; // Offset camera slightly above the ground for a better view
+    document.querySelector("#retry")?.addEventListener("click", initializeGame);
 
-        // Update light target to follow player
-        dirLight.target.position.copy(player.position);
-        dirLight.target.position.z += 50; // Keep target above player
+    initializeGame();
 
-        // Run game logic animations
-        animateVehicles();
-        animatePlayer();
-        hitTest();
-
-        renderer.render(scene, camera);
-    });
+    // Start the animation loop for WebXR
+    renderer.setAnimationLoop(animate);
 }
 
-/**
- * Updates the 3D score display.
- */
-function updateScore3D() {
-    if (score3D) {
-        const canvas = createTextCanvas(`Score: ${position.currentRow}`, 48, '#fca311', 'rgba(0, 0, 0, 0.5)');
-        score3D.material.map.dispose(); // Dispose old texture to prevent memory leaks
-        score3D.material.map = new THREE.CanvasTexture(canvas);
-        score3D.material.map.needsUpdate = true; // Mark texture for update
-        score3D.geometry.dispose(); // Dispose old geometry
-        score3D.geometry = new THREE.PlaneGeometry(canvas.width / 10, canvas.height / 10); // Update geometry size
-    }
-}
-
-/**
- * Shows the game over screen (both HTML and 3D).
- */
-function showGameOver() {
-    // Hide HTML result container (it's primarily for non-VR)
-    document.getElementById('result-container').style.visibility = 'visible';
-    document.getElementById('final-score').innerText = position.currentRow.toString();
-
-
-    // Update 3D game over text
-    if (finalScore3D) {
-        const canvas = createTextCanvas(`Your score: ${position.currentRow}`, 48, '#FFFFFF', 'rgba(0, 0, 0, 0.7)');
-        finalScore3D.material.map.dispose();
-        finalScore3D.material.map = new THREE.CanvasTexture(canvas);
-        finalScore3D.material.map.needsUpdate = true;
-        finalScore3D.geometry.dispose();
-        finalScore3D.geometry = new THREE.PlaneGeometry(canvas.width / 10, canvas.height / 10);
-    }
-
-    if (gameOver3D) {
-        gameOver3D.visible = true; // Show 3D game over group
-    }
-    renderer.setAnimationLoop(null); // Stop the game loop
-}
-
-/**
- * Hides the game over screen (both HTML and 3D) and restarts the game loop.
- */
-function hideGameOver() {
-    if (gameOver3D) {
-        gameOver3D.visible = false; // Hide 3D game over group
-    }
-    document.getElementById('result-container').style.visibility = 'hidden'; // Ensure HTML is hidden too
-    renderer.setAnimationLoop(animate); // Restart the game loop
-}
-
-
-// Event Listeners for HTML buttons (still useful outside VR)
-document.getElementById("forward")?.addEventListener("click", () => queueMove("forward"));
-document.getElementById("backward")?.addEventListener("click", () => queueMove("backward"));
-document.getElementById("left")?.addEventListener("click", () => queueMove("left"));
-document.getElementById("right")?.addEventListener("click", () => queueMove("right"));
-
-// Keyboard event listeners
-window.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowUp") {
-        event.preventDefault(); // Avoid scrolling the page
-        queueMove("forward");
-    } else if (event.key === "ArrowDown") {
-        event.preventDefault(); // Avoid scrolling the page
-        queueMove("backward");
-    } else if (event.key === "ArrowLeft") {
-        event.preventDefault(); // Avoid scrolling the page
-        queueMove("left");
-    } else if (event.key === "ArrowRight") {
-        event.preventDefault(); // Avoid scrolling the page
-        queueMove("right");
-    }
-});
-
-// HTML retry button listener
-document.querySelector("#retry")?.addEventListener("click", () => {
-    hideGameOver(); // Hide HTML and 3D game over
-    initializeGame(); // Restart game
-});
-
-// Initialize the game and 3D UI
-initializeGame();
-setup3DUI();
-
-/**
- * Resets the game to its initial state.
- */
 function initializeGame() {
-    initializePlayer(); // Reset player position
-    initializeMap(); // Regenerate map
-    updateScore3D(); // Reset 3D score display
-    hideGameOver(); // Ensure game over screen is hidden
+    initializePlayer();
+    initializeMap();
+
+    if (scoreDOM) scoreDOM.innerText = "0";
+    if (resultDOM) resultDOM.style.visibility = "hidden";
+    if (backgroundMusic) {
+        backgroundMusic.currentTime = 0; // Rewind music
+        // Only play if in VR or not in VR (if not in VR, it might auto-play,
+        // but explicit play() might be blocked by browser policies if not user-initiated)
+        if (renderer.xr.isPresenting) {
+            backgroundMusic.play();
+        } else {
+            // For desktop, usually an initial user interaction is needed to play audio
+            // You might need to add a "Start Game" button for desktop to ensure audio plays
+        }
+    }
+
+    // Re-enable animation loop on retry
+    renderer.setAnimationLoop(animate);
 }
 
-// Initial render loop setup. This is overridden by renderer.setAnimationLoop in setup3DUI
-// but kept here for clarity of the original structure.
-// The actual animation loop is managed by `renderer.setAnimationLoop` in `setup3DUI`.
-// renderer.setAnimationLoop(animate); // This line is effectively replaced by the one in setup3DUI
-
-/**
- * The main animation loop function.
- * This function is called repeatedly by `renderer.setAnimationLoop`.
- */
 function animate() {
-    animateVehicles(); // Animate vehicles
-    animatePlayer(); // Animate player movement
-    hitTest(); // Check for collisions
+    animateVehicles();
+    animatePlayer();
+    hitTest();
 
-    renderer.render(scene, camera); // Render the scene
+    // The camera position is now relative to the player's position in the game world.
+    // In VR, the XR camera will handle the head movement, but we want the "game camera"
+    // to follow the player object in the 3D scene.
+    // The player object acts as the "root" for the VR experience.
+    const playerWorldPosition = new THREE.Vector3();
+    player.getWorldPosition(playerWorldPosition);
+    
+    // Adjust camera position for a third-person view behind the player.
+    // These values might need tweaking for optimal VR comfort and perspective.
+    camera.position.set(
+        playerWorldPosition.x,
+        playerWorldPosition.y - 100, // Slightly behind the player
+        playerWorldPosition.z + 150  // Above the player
+    );
+    camera.lookAt(playerWorldPosition);
+
+    renderer.render(scene, camera);
 }
 
-// Handle window resize for non-VR mode
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
+// Initialize the Three.js scene and game
+init();
