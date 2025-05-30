@@ -8,32 +8,32 @@ const tileSize = 42;
 
 let camera, scene, renderer;
 let player;
-let map;
+let map; // The group containing all roads, grass, and vehicles
 let scoreDOM, resultDOM, finalScoreDOM, gameControlsDOM;
 let backgroundMusic;
 
-// Game state
+// Game state (logical position of the chicken)
 const metadata = [];
 const position = {
-    currentRow: 0,
-    currentTile: 0,
+    currentRow: 0, // Represents progress forward (along game's conceptual X-axis)
+    currentTile: 0, // Represents side-to-side lane (along game's conceptual Z-axis)
 };
 const movesQueue = [];
 const moveClock = new THREE.Clock(false);
 const gameClock = new THREE.Clock();
 
 function Camera() {
+    // For VR, a PerspectiveCamera is essential.
+    // The VR system handles the user's head movement and perspective.
     const fov = 75;
     const aspect = window.innerWidth / window.innerHeight;
     const near = 0.1;
     const far = 1000;
-    const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
-
-    // Initial position of the camera (relative to the player in animate function)
-    // This will be overridden by the animate function's camera positioning.
-    return camera;
+    const cam = new THREE.PerspectiveCamera(fov, aspect, near, far);
+    return cam;
 }
 
+// --- Textures remain the same ---
 function Texture(width, height, rects) {
     const canvas = document.createElement("canvas");
     canvas.width = width;
@@ -69,56 +69,43 @@ const truckLeftSideTexture = Texture(25, 30, [
     { x: 15, y: 15, w: 10, h: 10 },
 ]);
 
+// --- Object creation functions adjusted for Y-up and horizontal game play ---
+
 function Car(initialTileIndex, direction, color) {
     const car = new THREE.Group();
-    // Adjusted initial position to align with the new scene orientation
-    // Cars now move along the X-axis for "forward" across the lanes
-    car.position.z = initialTileIndex * tileSize; // Car's depth (what was Y) is now Z
-    if (!direction) car.rotation.y = Math.PI; // Rotate around Y for direction
+    // Car moves along Z-axis (lanes) and is positioned along X-axis (rows)
+    // Car's "forward" is along positive X or negative X depending on direction
+    car.position.z = initialTileIndex * tileSize; // Position in a specific lane (Z-axis)
+    // Rotate to face correct direction: 0 for facing positive X, Math.PI for negative X
+    car.rotation.y = direction ? 0 : Math.PI; // Face positive X if direction is true, else negative X
 
     const main = new THREE.Mesh(
-        new THREE.BoxGeometry(60, 30, 15),
+        new THREE.BoxGeometry(60, 30, 15), // Length, Width, Height
         new THREE.MeshLambertMaterial({ color, flatShading: true })
     );
-    main.position.y = 12; // Z-axis for height is now Y-axis
+    main.position.y = 12; // Height on Y-axis
     main.castShadow = true;
     main.receiveShadow = true;
     car.add(main);
 
     const cabin = new THREE.Mesh(new THREE.BoxGeometry(33, 24, 12), [
-        new THREE.MeshPhongMaterial({
-            color: 0xcccccc,
-            flatShading: true,
-            map: carBackTexture,
-        }),
-        new THREE.MeshPhongMaterial({
-            color: 0xcccccc,
-            flatShading: true,
-            map: carFrontTexture,
-        }),
-        new THREE.MeshPhongMaterial({
-            color: 0xcccccc,
-            flatShading: true,
-            map: carRightSideTexture,
-        }),
-        new THREE.MeshPhongMaterial({
-            color: 0xcccccc,
-            flatShading: true,
-            map: carLeftSideTexture,
-        }),
+        new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true, map: carBackTexture }),
+        new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true, map: carFrontTexture }),
+        new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true, map: carRightSideTexture }),
+        new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true, map: carLeftSideTexture }),
         new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true }), // top
         new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true }), // bottom
     ]);
-    cabin.position.x = -6;
-    cabin.position.y = 25.5; // Z-axis for height is now Y-axis
+    cabin.position.x = -6; // Position along car's length
+    cabin.position.y = 25.5; // Height on Y-axis
     cabin.castShadow = true;
     cabin.receiveShadow = true;
     car.add(cabin);
 
-    const frontWheel = Wheel(18);
+    const frontWheel = Wheel(18); // Position along car's length
     car.add(frontWheel);
 
-    const backWheel = Wheel(-18);
+    const backWheel = Wheel(-18); // Position along car's length
     car.add(backWheel);
 
     return car;
@@ -126,15 +113,14 @@ function Car(initialTileIndex, direction, color) {
 
 function DirectionalLight() {
     const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-    // Adjust light position to align with the new scene orientation
-    dirLight.position.set(-100, 200, -100); // Y is now up
-    dirLight.up.set(0, 1, 0); // Y-axis is the up vector for the light
+    // Position light generally above and slightly in front/side of the game world
+    dirLight.position.set(50, 200, 50); // X, Y (up), Z
+    dirLight.target.position.set(0, 0, 0); // Pointing towards the center of the scene
     dirLight.castShadow = true;
 
     dirLight.shadow.mapSize.width = 2048;
     dirLight.shadow.mapSize.height = 2048;
 
-    dirLight.shadow.camera.up.set(0, 1, 0); // Y-axis is the up vector for the shadow camera
     dirLight.shadow.camera.left = -400;
     dirLight.shadow.camera.right = 400;
     dirLight.shadow.camera.top = 400;
@@ -147,13 +133,12 @@ function DirectionalLight() {
 
 function Grass(rowIndex) {
     const grass = new THREE.Group();
-    // Grass rows should extend along X, and stack along Z for depth
-    grass.position.x = rowIndex * tileSize; // What was Y (rows) is now X
-    grass.rotation.x = Math.PI / 2; // Rotate to lie flat on XZ plane
+    // Grass rows extend along Z (side-to-side) and stack along X (forward)
+    grass.position.x = rowIndex * tileSize; // Position of the row along X (forward)
 
     const createSection = (color) =>
         new THREE.Mesh(
-            new THREE.BoxGeometry(tilesPerRow * tileSize, tileSize, 3), // Width, depth, height
+            new THREE.BoxGeometry(tileSize, 3, tilesPerRow * tileSize), // Width (X), Height (Y), Depth (Z)
             new THREE.MeshLambertMaterial({ color })
         );
 
@@ -162,11 +147,11 @@ function Grass(rowIndex) {
     grass.add(middle);
 
     const left = createSection(0x99c846);
-    left.position.z = -tilesPerRow * tileSize; // Adjusted for new orientation
+    left.position.z = -tilesPerRow * tileSize; // Extend to the left
     grass.add(left);
 
     const right = createSection(0x99c846);
-    right.position.z = tilesPerRow * tileSize; // Adjusted for new orientation
+    right.position.z = tilesPerRow * tileSize; // Extend to the right
     grass.add(right);
 
     return grass;
@@ -176,7 +161,8 @@ function initializeMap() {
     metadata.length = 0;
     map.remove(...map.children);
 
-    for (let rowIndex = 0; rowIndex > -10; rowIndex--) {
+    // Initial rows (behind the player, for rendering purposes)
+    for (let rowIndex = -10; rowIndex < 0; rowIndex++) { // Start from behind player
         const grass = Grass(rowIndex);
         map.add(grass);
     }
@@ -190,10 +176,11 @@ function addRows() {
     metadata.push(...newMetadata);
 
     newMetadata.forEach((rowData, index) => {
-        const rowIndex = startIndex + index + 1;
+        const rowIndex = startIndex + index; // Relative to metadata array, not absolute world position
+        const worldRowIndex = rowIndex + position.currentRow; // Translate to world coordinates
 
         if (rowData.type === "forest") {
-            const row = Grass(rowIndex);
+            const row = Grass(worldRowIndex);
             rowData.trees.forEach(({ tileIndex, height }) => {
                 const tree = Tree(tileIndex, height);
                 row.add(tree);
@@ -202,7 +189,7 @@ function addRows() {
         }
 
         if (rowData.type === "car") {
-            const row = Road(rowIndex);
+            const row = Road(worldRowIndex);
             rowData.vehicles.forEach((vehicle) => {
                 const car = Car(
                     vehicle.initialTileIndex,
@@ -216,7 +203,7 @@ function addRows() {
         }
 
         if (rowData.type === "truck") {
-            const row = Road(rowIndex);
+            const row = Road(worldRowIndex);
             rowData.vehicles.forEach((vehicle) => {
                 const truck = Truck(
                     vehicle.initialTileIndex,
@@ -232,24 +219,20 @@ function addRows() {
 }
 
 function Player() {
-    const player = new THREE.Group();
+    const playerGroup = new THREE.Group(); // This group will hold the chicken model
 
-    // Rotate the player group so its "forward" (Y-axis in game logic) aligns with X-axis in Three.js world
-    // and its "up" (Z-axis in game logic) aligns with Y-axis in Three.js world.
-    player.rotation.x = Math.PI / 2; // Rotate to lie flat on XZ plane
-    player.rotation.y = Math.PI / 2; // Rotate to point along X-axis (original Y-axis)
-
+    // Chicken model (body and cap)
     const body = new THREE.Mesh(
-        new THREE.BoxGeometry(15, 15, 20), // Chicken body dimensions
+        new THREE.BoxGeometry(15, 15, 20), // Width (X), Depth (Z), Height (Y)
         new THREE.MeshLambertMaterial({
             color: "white",
             flatShading: true,
         })
     );
-    body.position.z = 10; // Z-axis for height (was original Z, now maps to Y after rotation)
+    body.position.y = 10; // Half of height, resting on the ground (Y is up)
     body.castShadow = true;
     body.receiveShadow = true;
-    player.add(body);
+    playerGroup.add(body);
 
     const cap = new THREE.Mesh(
         new THREE.BoxGeometry(2, 4, 2),
@@ -258,19 +241,22 @@ function Player() {
             flatShading: true,
         })
     );
-    cap.position.z = 21; // Z-axis for height
+    cap.position.y = 21; // Position above the body
     cap.castShadow = true;
     cap.receiveShadow = true;
-    player.add(cap);
+    playerGroup.add(cap);
 
-    return player; // player is already a group
+    // The player's initial rotation will be handled in setRotation
+    return playerGroup;
 }
 
 function initializePlayer() {
-    // Player's initial position should reflect the new coordinate system
-    player.position.x = 0; // CurrentRow is now X
-    player.position.z = 0; // CurrentTile is now Z
-    player.children[0].position.y = 0; // Local Y position for body
+    player.position.x = 0; // Starting at the beginning of the road (X-axis)
+    player.position.y = 0; // On the ground
+    player.position.z = 0; // Starting in the middle lane
+
+    // Ensure player faces "forward" (positive X)
+    player.rotation.y = -Math.PI / 2; // Initial rotation so chicken faces along positive X (game forward)
 
     position.currentRow = 0;
     position.currentTile = 0;
@@ -300,6 +286,8 @@ function stepCompleted() {
     if (direction === "left") position.currentTile -= 1;
     if (direction === "right") position.currentTile += 1;
 
+    // Add new rows if the player is running out of them
+    // This logic might need adjustment if current position changes map generation
     if (position.currentRow > metadata.length - 10) addRows();
 
     if (scoreDOM) scoreDOM.innerText = position.currentRow.toString();
@@ -318,33 +306,36 @@ function Renderer() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
 
-    renderer.xr.enabled = true;
+    renderer.xr.enabled = true; // Enable WebXR
 
     return renderer;
 }
 
 function Road(rowIndex) {
     const road = new THREE.Group();
-    // Road rows should extend along X, and stack along Z for depth
-    road.position.x = rowIndex * tileSize; // What was Y (rows) is now X
-    road.rotation.x = Math.PI / 2; // Rotate to lie flat on XZ plane
+    // Road rows extend along Z (side-to-side) and stack along X (forward)
+    road.position.x = rowIndex * tileSize; // Position of the row along X (forward)
 
     const createSection = (color) =>
         new THREE.Mesh(
-            new THREE.PlaneGeometry(tilesPerRow * tileSize, tileSize), // Width, depth
+            new THREE.PlaneGeometry(tileSize, tilesPerRow * tileSize), // Width (X), Depth (Z) - Note: PlaneGeometry is usually XY, but we'll rotate it
             new THREE.MeshLambertMaterial({ color })
         );
 
     const middle = createSection(0x454a59);
+    // Rotate the plane to be on the XZ plane (Y-up)
+    middle.rotation.x = -Math.PI / 2; // Rotate so plane's Y points downwards (towards Z)
     middle.receiveShadow = true;
     road.add(middle);
 
     const left = createSection(0x393d49);
-    left.position.z = -tilesPerRow * tileSize; // Adjusted for new orientation
+    left.position.z = -tilesPerRow * tileSize;
+    left.rotation.x = -Math.PI / 2;
     road.add(left);
 
     const right = createSection(0x393d49);
-    right.position.z = tilesPerRow * tileSize; // Adjusted for new orientation
+    right.position.z = tilesPerRow * tileSize;
+    right.rotation.x = -Math.PI / 2;
     road.add(right);
 
     return road;
@@ -352,27 +343,27 @@ function Road(rowIndex) {
 
 function Tree(tileIndex, height) {
     const tree = new THREE.Group();
-    // Tree position to align with the new scene orientation
-    tree.position.z = tileIndex * tileSize; // TileIndex (original X) is now Z
+    // Trees are on a specific tile (Z-axis) within a row (X-axis)
+    tree.position.z = tileIndex * tileSize;
 
     const trunk = new THREE.Mesh(
-        new THREE.BoxGeometry(15, 15, 20),
+        new THREE.BoxGeometry(15, 15, 20), // Width (X), Depth (Z), Height (Y)
         new THREE.MeshLambertMaterial({
             color: 0x4d2926,
             flatShading: true,
         })
     );
-    trunk.position.y = 10; // Z-axis for height is now Y-axis
+    trunk.position.y = 10; // Half of height, resting on the ground
     tree.add(trunk);
 
     const crown = new THREE.Mesh(
-        new THREE.BoxGeometry(30, 30, height),
+        new THREE.BoxGeometry(30, 30, height), // Width (X), Depth (Z), Height (Y)
         new THREE.MeshLambertMaterial({
             color: 0x7aa21d,
             flatShading: true,
         })
     );
-    crown.position.y = height / 2 + 20; // Z-axis for height is now Y-axis
+    crown.position.y = height / 2 + 20; // Position above trunk
     crown.castShadow = true;
     crown.receiveShadow = true;
     tree.add(crown);
@@ -382,51 +373,35 @@ function Tree(tileIndex, height) {
 
 function Truck(initialTileIndex, direction, color) {
     const truck = new THREE.Group();
-    // Adjusted initial position to align with the new scene orientation
-    truck.position.z = initialTileIndex * tileSize; // Truck's depth is now Z
-    if (!direction) truck.rotation.y = Math.PI; // Rotate around Y for direction
+    // Truck's position is along a lane (Z-axis)
+    truck.position.z = initialTileIndex * tileSize;
+    truck.rotation.y = direction ? 0 : Math.PI; // Face positive X or negative X
 
     const cargo = new THREE.Mesh(
-        new THREE.BoxGeometry(70, 35, 35),
+        new THREE.BoxGeometry(70, 35, 35), // Length, Width, Height
         new THREE.MeshLambertMaterial({
             color: 0xb4c6fc,
             flatShading: true,
         })
     );
-    cargo.position.x = -15;
-    cargo.position.y = 25; // Z-axis for height is now Y-axis
+    cargo.position.x = -15; // Position along truck's length
+    cargo.position.y = 25; // Height
     cargo.castShadow = true;
     cargo.receiveShadow = true;
     truck.add(cargo);
 
     const cabin = new THREE.Mesh(new THREE.BoxGeometry(30, 30, 30), [
-        new THREE.MeshLambertMaterial({
-            color,
-            flatShading: true,
-            map: truckFrontTexture,
-        }), // front
-        new THREE.MeshLambertMaterial({
-            color,
-            flatShading: true,
-        }), // back
-        new THREE.MeshLambertMaterial({
-            color,
-            flatShading: true,
-            map: truckLeftSideTexture,
-        }),
-        new THREE.MeshLambertMaterial({
-            color,
-            flatShading: true,
-            map: truckRightSideTexture,
-        }),
+        new THREE.MeshLambertMaterial({ color, flatShading: true, map: truckFrontTexture }),
+        new THREE.MeshLambertMaterial({ color, flatShading: true }),
+        new THREE.MeshLambertMaterial({ color, flatShading: true, map: truckLeftSideTexture }),
+        new THREE.MeshLambertMaterial({ color, flatShading: true, map: truckRightSideTexture }),
         new THREE.MeshPhongMaterial({ color, flatShading: true }), // top
         new THREE.MeshPhongMaterial({ color, flatShading: true }), // bottom
     ]);
-    cabin.position.x = 35;
-    cabin.position.y = 20; // Z-axis for height is now Y-axis
+    cabin.position.x = 35; // Position along truck's length
+    cabin.position.y = 20; // Height
     cabin.castShadow = true;
     cabin.receiveShadow = true;
-
     truck.add(cabin);
 
     const frontWheel = Wheel(37);
@@ -443,55 +418,38 @@ function Truck(initialTileIndex, direction, color) {
 
 function Wheel(x) {
     const wheel = new THREE.Mesh(
-        new THREE.BoxGeometry(12, 33, 12),
+        new THREE.BoxGeometry(12, 33, 12), // Width (X), Diameter (Z), Thickness (Y)
         new THREE.MeshLambertMaterial({
             color: 0x333333,
             flatShading: true,
         })
     );
-    wheel.position.x = x;
-    wheel.position.y = 6; // Z-axis for height is now Y-axis
+    wheel.position.x = x; // Position along vehicle's length
+    wheel.position.y = 6; // Height
     return wheel;
 }
 
+// --- Game Logic Functions (mostly unchanged, coordinates are conceptual) ---
 function calculateFinalPosition(currentPosition, moves) {
-    return moves.reduce((position, direction) => {
-        if (direction === "forward")
-            return {
-                rowIndex: position.rowIndex + 1,
-                tileIndex: position.tileIndex,
-            };
-        if (direction === "backward")
-            return {
-                rowIndex: position.rowIndex - 1,
-                tileIndex: position.tileIndex,
-            };
-        if (direction === "left")
-            return {
-                rowIndex: position.rowIndex,
-                tileIndex: position.tileIndex - 1,
-            };
-        if (direction === "right")
-            return {
-                rowIndex: position.rowIndex,
-                tileIndex: position.tileIndex + 1,
-            };
-        return position;
+    return moves.reduce((pos, direction) => {
+        if (direction === "forward") return { rowIndex: pos.rowIndex + 1, tileIndex: pos.tileIndex };
+        if (direction === "backward") return { rowIndex: pos.rowIndex - 1, tileIndex: pos.tileIndex };
+        if (direction === "left") return { rowIndex: pos.rowIndex, tileIndex: pos.tileIndex - 1 };
+        if (direction === "right") return { rowIndex: pos.rowIndex, tileIndex: pos.tileIndex + 1 };
+        return pos;
     }, currentPosition);
 }
 
 function endsUpInValidPosition(currentPosition, moves) {
     const finalPosition = calculateFinalPosition(currentPosition, moves);
-
     if (
-        finalPosition.rowIndex === -1 ||
-        finalPosition.tileIndex === minTileIndex - 1 ||
-        finalPosition.tileIndex === maxTileIndex + 1
+        finalPosition.rowIndex < -1 || // Prevent going too far back (initial -1 row, but current starts at 0)
+        finalPosition.tileIndex < minTileIndex ||
+        finalPosition.tileIndex > maxTileIndex
     ) {
         return false;
     }
-
-    const finalRow = metadata[finalPosition.rowIndex - 1];
+    const finalRow = metadata[finalPosition.rowIndex]; // Use rowIndex directly on metadata
     if (
         finalRow &&
         finalRow.type === "forest" &&
@@ -499,15 +457,13 @@ function endsUpInValidPosition(currentPosition, moves) {
     ) {
         return false;
     }
-
     return true;
 }
 
 function generateRows(amount) {
     const rows = [];
     for (let i = 0; i < amount; i++) {
-        const rowData = generateRow();
-        rows.push(rowData);
+        rows.push(generateRow());
     }
     return rows;
 }
@@ -531,21 +487,16 @@ function generateForesMetadata() {
             tileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
         } while (occupiedTiles.has(tileIndex));
         occupiedTiles.add(tileIndex);
-
         const height = randomElement([20, 45, 60]);
-
         return { tileIndex, height };
     });
-
     return { type: "forest", trees };
 }
 
 function generateCarLaneMetadata() {
-    const direction = randomElement([true, false]);
+    const direction = randomElement([true, false]); // True for positive X, False for negative X
     const speed = randomElement([100, 125, 150]);
-
     const occupiedTiles = new Set();
-
     const vehicles = Array.from({ length: 3 }, () => {
         let initialTileIndex;
         do {
@@ -554,21 +505,16 @@ function generateCarLaneMetadata() {
         occupiedTiles.add(initialTileIndex - 1);
         occupiedTiles.add(initialTileIndex);
         occupiedTiles.add(initialTileIndex + 1);
-
         const color = randomElement([0xa52523, 0xbdb638, 0x78b14b]);
-
         return { initialTileIndex, color };
     });
-
     return { type: "car", direction, speed, vehicles };
 }
 
 function generateTruckLaneMetadata() {
     const direction = randomElement([true, false]);
     const speed = randomElement([100, 125, 150]);
-
     const occupiedTiles = new Set();
-
     const vehicles = Array.from({ length: 2 }, () => {
         let initialTileIndex;
         do {
@@ -579,17 +525,17 @@ function generateTruckLaneMetadata() {
         occupiedTiles.add(initialTileIndex);
         occupiedTiles.add(initialTileIndex + 1);
         occupiedTiles.add(initialTileIndex + 2);
-
         const color = randomElement([0xa52523, 0xbdb638, 0x78b14b]);
-
         return { initialTileIndex, color };
     });
-
     return { type: "truck", direction, speed, vehicles };
 }
 
 function animatePlayer() {
-    if (!movesQueue.length) return;
+    if (!movesQueue.length) {
+        moveClock.stop(); // Stop the clock when no moves are queued
+        return;
+    }
 
     if (!moveClock.running) moveClock.start();
 
@@ -606,31 +552,30 @@ function animatePlayer() {
 }
 
 function setPosition(progress) {
-    // CurrentRow is now X, CurrentTile is now Z
+    // Translate conceptual game position to Three.js world coordinates
     const startX = position.currentRow * tileSize;
-    const startZ = position.currentTile * tileSize; // Z for depth
+    const startZ = position.currentTile * tileSize;
     let endX = startX;
     let endZ = startZ;
 
-    // Movement directions are now relative to the new axis system
-    if (movesQueue[0] === "forward") endX += tileSize; // Forward is along X
+    if (movesQueue[0] === "forward") endX += tileSize;
     if (movesQueue[0] === "backward") endX -= tileSize;
-    if (movesQueue[0] === "left") endZ -= tileSize; // Left is along Z
+    if (movesQueue[0] === "left") endZ -= tileSize;
     if (movesQueue[0] === "right") endZ += tileSize;
 
     player.position.x = THREE.MathUtils.lerp(startX, endX, progress);
     player.position.z = THREE.MathUtils.lerp(startZ, endZ, progress);
-    player.children[0].position.y = Math.sin(progress * Math.PI) * 8; // Y for jump/height
+    player.children[0].position.y = Math.sin(progress * Math.PI) * 8; // Chicken's "jump"
 }
 
 function setRotation(progress) {
-    let endRotationY = Math.PI / 2; // Default for player (facing along X-axis initially)
-    if (movesQueue[0] == "forward") endRotationY = Math.PI / 2; // Facing positive X
-    if (movesQueue[0] == "left") endRotationY = Math.PI; // Facing negative Z
-    if (movesQueue[0] == "right") endRotationY = 0; // Facing positive Z
-    if (movesQueue[0] == "backward") endRotationY = -Math.PI / 2; // Facing negative X
+    let endRotationY = -Math.PI / 2; // Default: Facing positive X (game forward)
+    if (movesQueue[0] === "forward") endRotationY = -Math.PI / 2; // Face positive X
+    if (movesQueue[0] === "left") endRotationY = -Math.PI; // Face negative Z (left)
+    if (movesQueue[0] === "right") endRotationY = 0; // Face positive Z (right)
+    if (movesQueue[0] === "backward") endRotationY = Math.PI / 2; // Face negative X
 
-    // Interpolate only the Y-rotation (which is now the "yaw" or horizontal rotation)
+    // Interpolate the player's Y-rotation (around the Y-axis)
     player.rotation.y = THREE.MathUtils.lerp(
         player.rotation.y,
         endRotationY,
@@ -643,23 +588,24 @@ function animateVehicles() {
 
     metadata.forEach((rowData) => {
         if (rowData.type === "car" || rowData.type === "truck") {
-            // These are now moving along the Z-axis (original X-axis for horizontal movement)
+            // Vehicles move along the X-axis within their lanes (Z-axis)
             const beginningOfRow = (minTileIndex - 2) * tileSize;
             const endOfRow = (maxTileIndex + 2) * tileSize;
 
             rowData.vehicles.forEach(({ ref }) => {
                 if (!ref) throw Error("Vehicle reference is missing");
 
-                if (rowData.direction) { // Original direction was positive X
-                    ref.position.z =
-                        ref.position.z > endOfRow
+                // Vehicles move along the X-axis in the world
+                if (rowData.direction) { // True means moving towards positive X
+                    ref.position.x =
+                        ref.position.x > endOfRow
                             ? beginningOfRow
-                            : ref.position.z + rowData.speed * delta;
-                } else { // Original direction was negative X
-                    ref.position.z =
-                        ref.position.z < beginningOfRow
+                            : ref.position.x + rowData.speed * delta;
+                } else { // False means moving towards negative X
+                    ref.position.x =
+                        ref.position.x < beginningOfRow
                             ? endOfRow
-                            : ref.position.z - rowData.speed * delta;
+                            : ref.position.x - rowData.speed * delta;
                 }
             });
         }
@@ -667,8 +613,10 @@ function animateVehicles() {
 }
 
 function hitTest() {
-    const row = metadata[position.currentRow - 1];
-    if (!row) return;
+    // We check collision based on the *logical* position (currentRow, currentTile)
+    // and the *world* position of the vehicle models.
+    const row = metadata[position.currentRow]; // Check the row the player is currently on
+    if (!row) return; // Happens if player moves into non-existent rows
 
     if (row.type === "car" || row.type === "truck") {
         const playerBoundingBox = new THREE.Box3();
@@ -684,42 +632,40 @@ function hitTest() {
                 if (!resultDOM || !finalScoreDOM) return;
                 resultDOM.style.visibility = "visible";
                 finalScoreDOM.innerText = position.currentRow.toString();
-                renderer.setAnimationLoop(null);
+                renderer.setAnimationLoop(null); // Stop animation loop on game over
                 if (backgroundMusic) backgroundMusic.pause();
             }
         });
     }
 }
 
+// --- Main Initialization ---
 function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1a1a1a);
 
-    // Initial rotation of the entire scene to align the game world
-    // X-axis now represents the "forward" progression of the game.
-    // Z-axis represents the "lane" or "side-to-side" movement.
-    // Y-axis is "up".
-    scene.rotation.x = -Math.PI / 2; // Rotate the whole scene so X is forward and Z is sideways, Y is up
+    // No initial rotation on the entire scene.
+    // We will build the world correctly with Y-up from the start.
 
     player = Player();
-    scene.add(player);
+    scene.add(player); // Player is added directly to the scene
 
     map = new THREE.Group();
-    scene.add(map);
+    scene.add(map); // Map is added directly to the scene
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
 
     const dirLight = DirectionalLight();
-    dirLight.target = player; // Still target the player for lighting
-    scene.add(dirLight);
+    scene.add(dirLight); // Light is added directly to the scene, not parented to player
 
     camera = Camera();
-    // Camera is not added directly to the player. Its position will be set in animate()
+    // Camera's position and lookAt are set in the animate loop for dynamic following
 
     renderer = Renderer();
     document.getElementById("vr-button-container").appendChild(VRButton.createButton(renderer));
 
+    // Get DOM elements
     scoreDOM = document.getElementById("score");
     resultDOM = document.getElementById("result-container");
     finalScoreDOM = document.getElementById("final-score");
@@ -727,23 +673,26 @@ function init() {
     backgroundMusic = document.getElementById("backgroundMusic");
 
 
+    // VR Session Listeners
     renderer.xr.addEventListener('sessionstart', function () {
         console.log('VR Session Started');
-        gameControlsDOM.classList.add('active');
+        gameControlsDOM.classList.add('active'); // Show buttons in VR
         if (backgroundMusic) backgroundMusic.play();
     });
 
     renderer.xr.addEventListener('sessionend', function () {
         console.log('VR Session Ended');
-        gameControlsDOM.classList.remove('active');
+        gameControlsDOM.classList.remove('active'); // Hide buttons outside VR
         if (backgroundMusic) backgroundMusic.pause();
     });
 
+    // Control button event listeners
     document.getElementById("forward")?.addEventListener("click", () => queueMove("forward"));
     document.getElementById("backward")?.addEventListener("click", () => queueMove("backward"));
     document.getElementById("left")?.addEventListener("click", () => queueMove("left"));
     document.getElementById("right")?.addEventListener("click", () => queueMove("right"));
 
+    // Keyboard controls (useful for development)
     window.addEventListener("keydown", (event) => {
         if (event.key === "ArrowUp") {
             event.preventDefault();
@@ -764,7 +713,7 @@ function init() {
 
     initializeGame();
 
-    renderer.setAnimationLoop(animate);
+    renderer.setAnimationLoop(animate); // Start the main animation loop
 }
 
 function initializeGame() {
@@ -775,12 +724,11 @@ function initializeGame() {
     if (resultDOM) resultDOM.style.visibility = "hidden";
     if (backgroundMusic) {
         backgroundMusic.currentTime = 0;
-        if (renderer.xr.isPresenting) {
+        if (renderer.xr.isPresenting) { // Only attempt to play if in VR or if user initiated
             backgroundMusic.play();
         }
     }
-
-    renderer.setAnimationLoop(animate);
+    renderer.setAnimationLoop(animate); // Re-enable animation loop on retry
 }
 
 function animate() {
@@ -788,23 +736,34 @@ function animate() {
     animatePlayer();
     hitTest();
 
-    // Position the camera for a more distant, over-the-shoulder view
+    // Dynamically position the camera relative to the player
     const playerWorldPosition = new THREE.Vector3();
-    player.getWorldPosition(playerWorldPosition); // Get the player's position in world space
+    player.getWorldPosition(playerWorldPosition);
 
-    // Now, adjust the camera relative to this world position.
-    // X is forward, Z is side-to-side, Y is up.
-    // For a more distant view, increase the offsets.
+    // Camera is positioned behind (negative X), above (positive Y), and centered on Z
+    // Adjust these values for desired distance and height
+    const cameraOffsetX = -200; // Distance behind player (more negative for further back)
+    const cameraOffsetY = 250; // Height above player
+    const cameraOffsetZ = 0;   // Centered horizontally with player
+
     camera.position.set(
-        playerWorldPosition.x - 150, // More behind the player (further in negative X)
-        playerWorldPosition.y + 200, // Higher above the player
-        playerWorldPosition.z       // Same Z as player for side-to-side alignment
+        playerWorldPosition.x + cameraOffsetX,
+        playerWorldPosition.y + cameraOffsetY,
+        playerWorldPosition.z + cameraOffsetZ
     );
 
-    // Make the camera look at the player's current position
-    camera.lookAt(playerWorldPosition.x, playerWorldPosition.y + 50, playerWorldPosition.z); // Look slightly above the player
+    // Make the camera look slightly in front of the player and a bit above them
+    const lookAtOffsetZ = 0; // Look at player's Z position
+    const lookAtOffsetY = 50; // Look slightly above player's height
+
+    camera.lookAt(
+        playerWorldPosition.x,
+        playerWorldPosition.y + lookAtOffsetY,
+        playerWorldPosition.z + lookAtOffsetZ
+    );
 
     renderer.render(scene, camera);
 }
 
+// Start the game initialization
 init();
