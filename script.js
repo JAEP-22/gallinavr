@@ -1,292 +1,188 @@
-// Importa THREE de A-Frame si necesitas acceso directo a la librería
-// const THREE = AFRAME.THREE;
+import * as THREE from "https://esm.sh/three";
+import { VRButton } from "https://esm.sh/three/examples/jsm/webxr/VRButton.js";
 
 const minTileIndex = -8;
 const maxTileIndex = 8;
 const tilesPerRow = maxTileIndex - minTileIndex + 1;
-const tileSize = 4; // Reducido para VR, piensa en metros
-const playerTileSize = 1; // Tamaño del jugador en VR
+const tileSize = 42;
 
-// Variables para el juego, ahora en un contexto VR
-const metadata = []; // Misma lógica de metadata
-const movesQueue = [];
+let camera, scene, renderer;
+let player;
+let map;
+let scoreDOM, resultDOM, finalScoreDOM, gameControlsDOM;
+let backgroundMusic;
+
+// Game state
+const metadata = [];
 const position = {
     currentRow: 0,
     currentTile: 0,
 };
+const movesQueue = [];
+const moveClock = new THREE.Clock(false);
+const gameClock = new THREE.Clock();
 
-// Referencias a elementos de A-Frame
-const playerEl = document.getElementById('player');
-const rigEl = document.getElementById('rig'); // El rig contiene la cámara del jugador
-const gameMapEl = document.getElementById('game-map');
-const scoreDOM = document.getElementById("score");
+function Camera() {
+    // In VR, the camera will be managed by WebXR, but we'll still define a perspective camera
+    // for initial setup and potential non-VR fallback. For an immersive experience,
+    // the perspective camera is more suitable than orthographic.
+    const fov = 75;
+    const aspect = window.innerWidth / window.innerHeight;
+    const near = 0.1;
+    const far = 1000;
+    const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
 
-// --- Componentes personalizados de A-Frame (Ejemplos) ---
+    // Initial position for the camera, relative to the player in VR
+    camera.position.set(0, -100, 150); // Adjusted for a better "over-the-shoulder" view in VR
+    camera.lookAt(0, 0, 0); // Look at the origin initially
 
-// Componente para manejar el movimiento del jugador por tiles
-AFRAME.registerComponent('player-mover', {
-    init: function () {
-        this.el.addEventListener('player-move', this.onPlayerMove.bind(this));
-        this.moveClock = new THREE.Clock(false);
-        this.stepTime = 0.3; // Tiempo para un paso en segundos
-        this.isMoving = false;
-        this.targetPosition = new THREE.Vector3();
-        this.startPosition = new THREE.Vector3();
-        this.startRotation = new THREE.Euler();
-        this.targetRotation = new THREE.Euler();
-    },
-
-    onPlayerMove: function (evt) {
-        const direction = evt.detail.direction;
-        const isValidMove = endsUpInValidPosition(
-            {
-                rowIndex: position.currentRow,
-                tileIndex: position.currentTile,
-            },
-            [...movesQueue, direction]
-        );
-
-        if (!isValidMove || this.isMoving) {
-            console.log("Movimiento inválido o ya en movimiento:", direction);
-            return;
-        }
-
-        movesQueue.push(direction);
-        if (!this.isMoving) {
-            this.startMove();
-        }
-    },
-
-    startMove: function () {
-        if (!movesQueue.length) return;
-
-        this.isMoving = true;
-        this.moveClock.start();
-
-        // Guardar posiciones iniciales
-        this.startPosition.copy(rigEl.object3D.position); // Mover el rig
-        this.startRotation.copy(playerEl.object3D.rotation);
-
-        // Calcular la posición final
-        let endX = position.currentTile * tileSize;
-        let endY = position.currentRow * tileSize; // En A-Frame, 'y' es el plano horizontal, 'z' la profundidad
-
-        const nextMove = movesQueue[0];
-        if (nextMove === "left") endX -= tileSize;
-        if (nextMove === "right") endX += tileSize;
-        if (nextMove === "forward") endY += tileSize;
-        if (nextMove === "backward") endY -= tileSize;
-
-        this.targetPosition.set(endX, this.startPosition.y, endY); // Asegúrate de que 'y' sea la altura y 'z' la profundidad en tu escena A-Frame
-
-        // Calcular rotación final
-        let endRotationZ = 0; // Rotación en Z para el eje vertical (arriba/abajo)
-        if (nextMove === "forward") endRotationZ = 0;
-        if (nextMove === "left") endRotationZ = Math.PI / 2; // 90 grados
-        if (nextMove === "right") endRotationZ = -Math.PI / 2; // -90 grados
-        if (nextMove === "backward") endRotationZ = Math.PI; // 180 grados
-
-        this.targetRotation.set(0, endRotationZ, 0); // Rotación en Y para el jugador (mirando)
-    },
-
-    tick: function (time, deltaTime) {
-        if (!this.isMoving) return;
-
-        const progress = Math.min(1, this.moveClock.getElapsedTime() / this.stepTime);
-
-        // Interpolación de posición del rig (para mover todo el sistema del jugador)
-        rigEl.object3D.position.lerpVectors(this.startPosition, this.targetPosition, progress);
-
-        // Interpolación de rotación del cuerpo del jugador (visual, no del rig)
-        // Puedes usar slerp para rotaciones si es necesario, pero lerp de Euler es simple aquí
-        playerEl.object3D.rotation.y = THREE.MathUtils.lerp(this.startRotation.y, this.targetRotation.y, progress);
-        // Efecto de "salto" de la gallina
-        playerEl.object3D.position.y = 0.25 + Math.sin(progress * Math.PI) * 0.2; // Altura del salto
-
-        if (progress >= 1) {
-            this.isMoving = false;
-            this.moveClock.stop();
-            this.moveClock.elapsedTime = 0; // Resetear para la próxima vez
-
-            // Actualizar la posición lógica del juego
-            const direction = movesQueue.shift();
-            if (direction === "forward") position.currentRow += 1;
-            if (direction === "backward") position.currentRow -= 1;
-            if (direction === "left") position.currentTile -= 1;
-            if (direction === "right") position.currentTile += 1;
-
-            if (scoreDOM) scoreDOM.innerText = position.currentRow.toString();
-
-            // Alinear la posición final del rig a la cuadrícula para evitar errores de flotante
-            rigEl.object3D.position.x = position.currentTile * tileSize;
-            rigEl.object3D.position.z = position.currentRow * tileSize;
-            rigEl.object3D.position.y = 0; // Asegurarse de que esté en el suelo
-
-            // Generar nuevas filas si es necesario
-            if (position.currentRow > metadata.length - 10) addRows();
-        }
-    }
-});
-
-// Adjuntar el componente al rig del jugador
-rigEl.setAttribute('player-mover', '');
-
-// --- Funciones del juego (adaptadas para A-Frame) ---
-
-function initializeGame() {
-    initializePlayer();
-    initializeMap();
-
-    if (scoreDOM) scoreDOM.innerText = "0";
-    // Si tuvieras un div de resultado para VR, lo ocultarías/mostrarías
-    // const resultDOM = document.getElementById("result-container");
-    // if (resultDOM) resultDOM.style.visibility = "hidden";
+    return camera;
 }
 
-function initializePlayer() {
-    position.currentRow = 0;
-    position.currentTile = 0;
-    movesQueue.length = 0;
+function Texture(width, height, rects) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.fillStyle = "rgba(0,0,0,0.6)";
+    rects.forEach((rect) => {
+        context.fillRect(rect.x, rect.y, rect.w, rect.h);
+    });
+    return new THREE.CanvasTexture(canvas);
+}
 
-    // Posicionar el rig y el jugador visualmente
-    rigEl.object3D.position.set(0, 0, 0);
-    playerEl.object3D.position.set(0, 0.25, 0); // La gallina en el centro del rig
-    playerEl.object3D.rotation.set(0, 0, 0);
+const carFrontTexture = new Texture(40, 80, [{ x: 0, y: 10, w: 30, h: 60 }]);
+const carBackTexture = new Texture(40, 80, [{ x: 10, y: 10, w: 30, h: 60 }]);
+const carRightSideTexture = new Texture(110, 40, [
+    { x: 10, y: 0, w: 50, h: 30 },
+    { x: 70, y: 0, w: 30, h: 30 },
+]);
+const carLeftSideTexture = new Texture(110, 40, [
+    { x: 10, y: 10, w: 50, h: 30 },
+    { x: 70, y: 10, w: 30, h: 30 },
+]);
+
+const truckFrontTexture = Texture(30, 30, [
+    { x: 5, y: 0, w: 10, h: 30 },
+]);
+const truckRightSideTexture = Texture(25, 30, [
+    { x: 15, y: 5, w: 10, h: 10 },
+]);
+const truckLeftSideTexture = Texture(25, 30, [
+    { x: 15, y: 15, w: 10, h: 10 },
+]);
+
+function Car(initialTileIndex, direction, color) {
+    const car = new THREE.Group();
+    car.position.x = initialTileIndex * tileSize;
+    if (!direction) car.rotation.z = Math.PI;
+
+    const main = new THREE.Mesh(
+        new THREE.BoxGeometry(60, 30, 15),
+        new THREE.MeshLambertMaterial({ color, flatShading: true })
+    );
+    main.position.z = 12;
+    main.castShadow = true;
+    main.receiveShadow = true;
+    car.add(main);
+
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(33, 24, 12), [
+        new THREE.MeshPhongMaterial({
+            color: 0xcccccc,
+            flatShading: true,
+            map: carBackTexture,
+        }),
+        new THREE.MeshPhongMaterial({
+            color: 0xcccccc,
+            flatShading: true,
+            map: carFrontTexture,
+        }),
+        new THREE.MeshPhongMaterial({
+            color: 0xcccccc,
+            flatShading: true,
+            map: carRightSideTexture,
+        }),
+        new THREE.MeshPhongMaterial({
+            color: 0xcccccc,
+            flatShading: true,
+            map: carLeftSideTexture,
+        }),
+        new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true }), // top
+        new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true }), // bottom
+    ]);
+    cabin.position.x = -6;
+    cabin.position.z = 25.5;
+    cabin.castShadow = true;
+    cabin.receiveShadow = true;
+    car.add(cabin);
+
+    const frontWheel = Wheel(18);
+    car.add(frontWheel);
+
+    const backWheel = Wheel(-18);
+    car.add(backWheel);
+
+    return car;
+}
+
+function DirectionalLight() {
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1); // White light, full intensity
+    dirLight.position.set(-100, -100, 200);
+    dirLight.up.set(0, 0, 1);
+    dirLight.castShadow = true;
+
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+
+    dirLight.shadow.camera.up.set(0, 0, 1);
+    dirLight.shadow.camera.left = -400;
+    dirLight.shadow.camera.right = 400;
+    dirLight.shadow.camera.top = 400;
+    dirLight.shadow.camera.bottom = -400;
+    dirLight.shadow.camera.near = 50;
+    dirLight.shadow.camera.far = 400;
+
+    return dirLight;
+}
+
+function Grass(rowIndex) {
+    const grass = new THREE.Group();
+    grass.position.y = rowIndex * tileSize;
+
+    const createSection = (color) =>
+        new THREE.Mesh(
+            new THREE.BoxGeometry(tilesPerRow * tileSize, tileSize, 3),
+            new THREE.MeshLambertMaterial({ color })
+        );
+
+    const middle = createSection(0xbaf455);
+    middle.receiveShadow = true;
+    grass.add(middle);
+
+    const left = createSection(0x99c846);
+    left.position.x = -tilesPerRow * tileSize;
+    grass.add(left);
+
+    const right = createSection(0x99c846);
+    right.position.x = tilesPerRow * tileSize;
+    grass.add(right);
+
+    return grass;
 }
 
 function initializeMap() {
-    // Limpiar el mapa existente en A-Frame
-    while (gameMapEl.firstChild) {
-        gameMapEl.removeChild(gameMapEl.firstChild);
-    }
+    // Remove all rows
     metadata.length = 0;
+    map.remove(...map.children);
 
-    // Añadir algunas filas iniciales de césped
+    // Add new rows
     for (let rowIndex = 0; rowIndex > -10; rowIndex--) {
-        const grassEl = createGrass(rowIndex);
-        gameMapEl.appendChild(grassEl);
+        const grass = Grass(rowIndex);
+        map.add(grass);
     }
     addRows();
-}
-
-function createGrass(rowIndex) {
-    const grassGroup = document.createElement('a-entity');
-    grassGroup.setAttribute('position', `0 0 ${rowIndex * tileSize}`); // Y es la altura, Z es la profundidad
-
-    // Sección central del césped
-    const middleGrass = document.createElement('a-box');
-    middleGrass.setAttribute('color', '#baf455');
-    middleGrass.setAttribute('width', `${tilesPerRow * tileSize}`);
-    middleGrass.setAttribute('height', '0.1'); // Pequeño espesor
-    middleGrass.setAttribute('depth', `${tileSize}`);
-    middleGrass.setAttribute('position', `0 -0.05 0`); // Ligeramente debajo del plano
-    middleGrass.setAttribute('shadow', 'receive: true');
-    grassGroup.appendChild(middleGrass);
-
-    // Secciones izquierda y derecha (para cuando el jugador se mueva lateralmente)
-    const leftGrass = document.createElement('a-box');
-    leftGrass.setAttribute('color', '#99c846');
-    leftGrass.setAttribute('width', `${tilesPerRow * tileSize}`);
-    leftGrass.setAttribute('height', '0.1');
-    leftGrass.setAttribute('depth', `${tileSize}`);
-    leftGrass.setAttribute('position', `${-tilesPerRow * tileSize} -0.05 0`);
-    leftGrass.setAttribute('shadow', 'receive: true');
-    grassGroup.appendChild(leftGrass);
-
-    const rightGrass = document.createElement('a-box');
-    rightGrass.setAttribute('color', '#99c846');
-    rightGrass.setAttribute('width', `${tilesPerRow * tileSize}`);
-    rightGrass.setAttribute('height', '0.1');
-    rightGrass.setAttribute('depth', `${tileSize}`);
-    rightGrass.setAttribute('position', `${tilesPerRow * tileSize} -0.05 0`);
-    rightGrass.setAttribute('shadow', 'receive: true');
-    grassGroup.appendChild(rightGrass);
-
-    return grassGroup;
-}
-
-
-// Adaptar Texture, Car, Truck, Tree, Wheel para A-Frame:
-// En A-Frame, estos se crearían como entidades <a-entity> con componentes de geometría y material.
-// Las texturas de Canvas funcionarían, pero tendrías que aplicarlas a los componentes `material` de A-Frame.
-// Ejemplo simplificado de Tree (deberías construirlo de forma similar a como lo haces en Three.js):
-function createTree(tileIndex, height) {
-    const treeGroup = document.createElement('a-entity');
-    treeGroup.setAttribute('position', `${tileIndex * tileSize} 0.05 0`); // Posición en la fila
-
-    const trunk = document.createElement('a-box');
-    trunk.setAttribute('color', '#4d2926');
-    trunk.setAttribute('width', '0.3');
-    trunk.setAttribute('height', '0.6');
-    trunk.setAttribute('depth', '0.3');
-    trunk.setAttribute('position', `0 0.3 0`); // Altura del tronco
-    treeGroup.appendChild(trunk);
-
-    const crown = document.createElement('a-box');
-    crown.setAttribute('color', '#7aa21d');
-    crown.setAttribute('width', '0.8');
-    crown.setAttribute('height', `${height / 50}`); // Ajustar escala para VR
-    crown.setAttribute('depth', '0.8');
-    crown.setAttribute('position', `0 ${height / 100 + 0.6} 0`); // Altura de la copa
-    crown.setAttribute('shadow', 'receive: true; cast: true');
-    treeGroup.appendChild(crown);
-
-    return treeGroup;
-}
-
-function createRoad(rowIndex) {
-    const roadGroup = document.createElement('a-entity');
-    roadGroup.setAttribute('position', `0 0 ${rowIndex * tileSize}`);
-
-    const middleRoad = document.createElement('a-plane'); // Usar plano para la carretera
-    middleRoad.setAttribute('color', '#454a59');
-    middleRoad.setAttribute('width', `${tilesPerRow * tileSize}`);
-    middleRoad.setAttribute('height', `${tileSize}`);
-    middleRoad.setAttribute('rotation', `-90 0 0`); // Rotar para que sea horizontal
-    middleRoad.setAttribute('position', `0 0.01 0`); // Ligeramente por encima del césped
-    middleRoad.setAttribute('shadow', 'receive: true');
-    roadGroup.appendChild(middleRoad);
-
-    // Podrías añadir las secciones izquierda y derecha de la carretera de forma similar
-    const leftRoad = document.createElement('a-plane');
-    leftRoad.setAttribute('color', '#393d49');
-    leftRoad.setAttribute('width', `${tilesPerRow * tileSize}`);
-    leftRoad.setAttribute('height', `${tileSize}`);
-    leftRoad.setAttribute('rotation', `-90 0 0`);
-    leftRoad.setAttribute('position', `${-tilesPerRow * tileSize} 0.01 0`);
-    roadGroup.appendChild(leftRoad);
-
-    const rightRoad = document.createElement('a-plane');
-    rightRoad.setAttribute('color', '#393d49');
-    rightRoad.setAttribute('width', `${tilesPerRow * tileSize}`);
-    rightRoad.setAttribute('height', `${tileSize}`);
-    rightRoad.setAttribute('rotation', `-90 0 0`);
-    rightRoad.setAttribute('position', `${tilesPerRow * tileSize} 0.01 0`);
-    roadGroup.appendChild(rightRoad);
-
-    return roadGroup;
-}
-
-// Para Car y Truck, la complejidad es mayor debido a las texturas y la forma.
-// Tendrías que crear los meshes como elementos de A-Frame o cargar modelos 3D.
-// Aquí un concepto muy simplificado de un Car:
-function createCar(initialTileIndex, direction, color) {
-    const carGroup = document.createElement('a-entity');
-    carGroup.setAttribute('position', `${initialTileIndex * tileSize} 0.5 0`); // Altura del auto
-    if (!direction) carGroup.setAttribute('rotation', '0 180 0'); // Rotar 180 grados en Y
-
-    const mainBody = document.createElement('a-box');
-    mainBody.setAttribute('color', color);
-    mainBody.setAttribute('width', '1.5'); // Adaptar tamaños
-    mainBody.setAttribute('height', '0.4');
-    mainBody.setAttribute('depth', '0.7');
-    mainBody.setAttribute('position', '0 0.2 0');
-    mainBody.setAttribute('shadow', 'cast: true; receive: true');
-    carGroup.appendChild(mainBody);
-
-    // La cabina y ruedas serían entidades separadas dentro de carGroup
-
-    return carGroup;
 }
 
 function addRows() {
@@ -296,113 +192,268 @@ function addRows() {
     metadata.push(...newMetadata);
 
     newMetadata.forEach((rowData, index) => {
-        const rowIndex = startIndex + index + 1; // Ajustar para que las filas se generen hacia adelante
+        const rowIndex = startIndex + index + 1;
 
-        let rowEl;
         if (rowData.type === "forest") {
-            rowEl = createGrass(rowIndex);
+            const row = Grass(rowIndex);
+
             rowData.trees.forEach(({ tileIndex, height }) => {
-                const treeEl = createTree(tileIndex, height);
-                rowEl.appendChild(treeEl);
+                const three = Tree(tileIndex, height);
+                row.add(three);
             });
-            gameMapEl.appendChild(rowEl);
-        } else if (rowData.type === "car") {
-            rowEl = createRoad(rowIndex);
+
+            map.add(row);
+        }
+
+        if (rowData.type === "car") {
+            const row = Road(rowIndex);
+
             rowData.vehicles.forEach((vehicle) => {
-                const carEl = createCar(vehicle.initialTileIndex, rowData.direction, vehicle.color);
-                vehicle.ref = carEl; // Guardar referencia al elemento Three.js del auto
-                rowEl.appendChild(carEl);
+                const car = Car(
+                    vehicle.initialTileIndex,
+                    rowData.direction,
+                    vehicle.color
+                );
+                vehicle.ref = car;
+                row.add(car);
             });
-            gameMapEl.appendChild(rowEl);
-        } else if (rowData.type === "truck") {
-             rowEl = createRoad(rowIndex);
+
+            map.add(row);
+        }
+
+        if (rowData.type === "truck") {
+            const row = Road(rowIndex);
+
             rowData.vehicles.forEach((vehicle) => {
-                // Aquí deberías crear el camión, similar al auto pero con más partes
-                const truckEl = createCar(vehicle.initialTileIndex, rowData.direction, vehicle.color); // Usando car por simplicidad
-                vehicle.ref = truckEl;
-                rowEl.appendChild(truckEl);
+                const truck = Truck(
+                    vehicle.initialTileIndex,
+                    rowData.direction,
+                    vehicle.color
+                );
+                vehicle.ref = truck;
+                row.add(truck);
             });
-            gameMapEl.appendChild(rowEl);
+
+            map.add(row);
         }
     });
 }
 
-// Las funciones de generación de metadata son reutilizables tal cual
-function randomElement(array) {
-    return array[Math.floor(Math.random() * array.length)];
+function Player() {
+    const player = new THREE.Group();
+
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(15, 15, 20),
+        new THREE.MeshLambertMaterial({
+            color: "white",
+            flatShading: true,
+        })
+    );
+    body.position.z = 10;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    player.add(body);
+
+    const cap = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 4, 2),
+        new THREE.MeshLambertMaterial({
+            color: 0xf0619a,
+            flatShading: true,
+        })
+    );
+    cap.position.z = 21;
+    cap.castShadow = true;
+    cap.receiveShadow = true;
+    player.add(cap);
+
+    const playerContainer = new THREE.Group();
+    playerContainer.add(player);
+
+    return playerContainer;
 }
 
-function generateRows(amount) {
-    const rows = [];
-    for (let i = 0; i < amount; i++) {
-        const rowData = generateRow();
-        rows.push(rowData);
-    }
-    return rows;
+function initializePlayer() {
+    player.position.x = 0;
+    player.position.y = 0;
+    player.children[0].position.z = 0; // Reset player's Z position relative to its container
+
+    position.currentRow = 0;
+    position.currentTile = 0;
+
+    movesQueue.length = 0;
 }
 
-function generateRow() {
-    const type = randomElement(["car", "truck", "forest"]);
-    if (type === "car") return generateCarLaneMetadata();
-    if (type === "truck") return generateTruckLaneMetadata();
-    return generateForesMetadata();
+function queueMove(direction) {
+    const isValidMove = endsUpInValidPosition(
+        {
+            rowIndex: position.currentRow,
+            tileIndex: position.currentTile,
+        },
+        [...movesQueue, direction]
+    );
+
+    if (!isValidMove) return;
+
+    movesQueue.push(direction);
 }
 
-function generateForesMetadata() {
-    const occupiedTiles = new Set();
-    const trees = Array.from({ length: 4 }, () => {
-        let tileIndex;
-        do {
-            tileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
-        } while (occupiedTiles.has(tileIndex));
-        occupiedTiles.add(tileIndex);
+function stepCompleted() {
+    const direction = movesQueue.shift();
 
-        const height = randomElement([20, 45, 60]); // Esto es en Three.js units, adaptar para A-Frame
-        return { tileIndex, height };
+    if (direction === "forward") position.currentRow += 1;
+    if (direction === "backward") position.currentRow -= 1;
+    if (direction === "left") position.currentTile -= 1;
+    if (direction === "right") position.currentTile += 1;
+
+    if (position.currentRow > metadata.length - 10) addRows();
+
+    if (scoreDOM) scoreDOM.innerText = position.currentRow.toString();
+}
+
+function Renderer() {
+    const canvas = document.querySelector("canvas.game");
+    if (!canvas) throw new Error("Canvas not found");
+
+    const renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        canvas: canvas,
     });
-    return { type: "forest", trees };
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+
+    // Enable WebXR
+    renderer.xr.enabled = true;
+
+    return renderer;
 }
 
-function generateCarLaneMetadata() {
-    const direction = randomElement([true, false]);
-    const speed = randomElement([1, 1.25, 1.5]); // Velocidad en m/s (adaptada para VR)
+function Road(rowIndex) {
+    const road = new THREE.Group();
+    road.position.y = rowIndex * tileSize;
 
-    const occupiedTiles = new Set();
-    const vehicles = Array.from({ length: 3 }, () => {
-        let initialTileIndex;
-        do {
-            initialTileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
-        } while (occupiedTiles.has(initialTileIndex) || occupiedTiles.has(initialTileIndex - 1) || occupiedTiles.has(initialTileIndex + 1));
-        occupiedTiles.add(initialTileIndex - 1);
-        occupiedTiles.add(initialTileIndex);
-        occupiedTiles.add(initialTileIndex + 1);
+    const createSection = (color) =>
+        new THREE.Mesh(
+            new THREE.PlaneGeometry(tilesPerRow * tileSize, tileSize),
+            new THREE.MeshLambertMaterial({ color })
+        );
 
-        const color = randomElement([0xa52523, 0xbdb638, 0x78b14b]);
-        return { initialTileIndex, color };
-    });
-    return { type: "car", direction, speed, vehicles };
+    const middle = createSection(0x454a59);
+    middle.receiveShadow = true;
+    road.add(middle);
+
+    const left = createSection(0x393d49);
+    left.position.x = -tilesPerRow * tileSize;
+    road.add(left);
+
+    const right = createSection(0x393d49);
+    right.position.x = tilesPerRow * tileSize;
+    road.add(right);
+
+    return road;
 }
 
-function generateTruckLaneMetadata() {
-    const direction = randomElement([true, false]);
-    const speed = randomElement([0.8, 1, 1.2]); // Velocidad en m/s (adaptada para VR)
+function Tree(tileIndex, height) {
+    const tree = new THREE.Group();
+    tree.position.x = tileIndex * tileSize;
 
-    const occupiedTiles = new Set();
-    const vehicles = Array.from({ length: 2 }, () => {
-        let initialTileIndex;
-        do {
-            initialTileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
-        } while (occupiedTiles.has(initialTileIndex) || occupiedTiles.has(initialTileIndex - 1) || occupiedTiles.has(initialTileIndex + 1) || occupiedTiles.has(initialTileIndex - 2) || occupiedTiles.has(initialTileIndex + 2));
-        occupiedTiles.add(initialTileIndex - 2);
-        occupiedTiles.add(initialTileIndex - 1);
-        occupiedTiles.add(initialTileIndex);
-        occupiedTiles.add(initialTileIndex + 1);
-        occupiedTiles.add(initialTileIndex + 2);
+    const trunk = new THREE.Mesh(
+        new THREE.BoxGeometry(15, 15, 20),
+        new THREE.MeshLambertMaterial({
+            color: 0x4d2926,
+            flatShading: true,
+        })
+    );
+    trunk.position.z = 10;
+    tree.add(trunk);
 
-        const color = randomElement([0xa52523, 0xbdb638, 0x78b14b]);
-        return { initialTileIndex, color };
-    });
-    return { type: "truck", direction, speed, vehicles };
+    const crown = new THREE.Mesh(
+        new THREE.BoxGeometry(30, 30, height),
+        new THREE.MeshLambertMaterial({
+            color: 0x7aa21d,
+            flatShading: true,
+        })
+    );
+    crown.position.z = height / 2 + 20;
+    crown.castShadow = true;
+    crown.receiveShadow = true;
+    tree.add(crown);
+
+    return tree;
+}
+
+function Truck(initialTileIndex, direction, color) {
+    const truck = new THREE.Group();
+    truck.position.x = initialTileIndex * tileSize;
+    if (!direction) truck.rotation.z = Math.PI;
+
+    const cargo = new THREE.Mesh(
+        new THREE.BoxGeometry(70, 35, 35),
+        new THREE.MeshLambertMaterial({
+            color: 0xb4c6fc,
+            flatShading: true,
+        })
+    );
+    cargo.position.x = -15;
+    cargo.position.z = 25;
+    cargo.castShadow = true;
+    cargo.receiveShadow = true;
+    truck.add(cargo);
+
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(30, 30, 30), [
+        new THREE.MeshLambertMaterial({
+            color,
+            flatShading: true,
+            map: truckFrontTexture,
+        }), // front
+        new THREE.MeshLambertMaterial({
+            color,
+            flatShading: true,
+        }), // back
+        new THREE.MeshLambertMaterial({
+            color,
+            flatShading: true,
+            map: truckLeftSideTexture,
+        }),
+        new THREE.MeshLambertMaterial({
+            color,
+            flatShading: true,
+            map: truckRightSideTexture,
+        }),
+        new THREE.MeshPhongMaterial({ color, flatShading: true }), // top
+        new THREE.MeshPhongMaterial({ color, flatShading: true }), // bottom
+    ]);
+    cabin.position.x = 35;
+    cabin.position.z = 20;
+    cabin.castShadow = true;
+    cabin.receiveShadow = true;
+
+    truck.add(cabin);
+
+    const frontWheel = Wheel(37);
+    truck.add(frontWheel);
+
+    const middleWheel = Wheel(5);
+    truck.add(middleWheel);
+
+    const backWheel = Wheel(-35);
+    truck.add(backWheel);
+
+    return truck;
+}
+
+function Wheel(x) {
+    const wheel = new THREE.Mesh(
+        new THREE.BoxGeometry(12, 33, 12),
+        new THREE.MeshLambertMaterial({
+            color: 0x333333,
+            flatShading: true,
+        })
+    );
+    wheel.position.x = x;
+    wheel.position.z = 6;
+    return wheel;
 }
 
 function calculateFinalPosition(currentPosition, moves) {
@@ -435,14 +486,14 @@ function endsUpInValidPosition(currentPosition, moves) {
     const finalPosition = calculateFinalPosition(currentPosition, moves);
 
     if (
-        finalPosition.rowIndex < 0 || // No permitir ir hacia atrás del punto de inicio
-        finalPosition.tileIndex < minTileIndex ||
-        finalPosition.tileIndex > maxTileIndex
+        finalPosition.rowIndex === -1 ||
+        finalPosition.tileIndex === minTileIndex - 1 ||
+        finalPosition.tileIndex === maxTileIndex + 1
     ) {
         return false;
     }
 
-    const finalRow = metadata[finalPosition.rowIndex - 1]; // Ajuste por índice de metadata
+    const finalRow = metadata[finalPosition.rowIndex - 1];
     if (
         finalRow &&
         finalRow.type === "forest" &&
@@ -450,127 +501,316 @@ function endsUpInValidPosition(currentPosition, moves) {
     ) {
         return false;
     }
+
     return true;
 }
 
-// Animar vehículos (esto iría en el tick de A-Frame o en un componente)
-AFRAME.registerComponent('vehicle-animator', {
-    tick: function (time, deltaTime) {
-        if (!this.lastTime) {
-            this.lastTime = time;
-            return;
-        }
-        const delta = (time - this.lastTime) / 1000; // Delta en segundos
-        this.lastTime = time;
-
-        metadata.forEach((rowData) => {
-            if (rowData.type === "car" || rowData.type === "truck") {
-                const beginningOfRow = (minTileIndex - 2) * tileSize;
-                const endOfRow = (maxTileIndex + 2) * tileSize;
-
-                rowData.vehicles.forEach(({ ref }) => {
-                    if (!ref || !ref.object3D) return; // Asegurarse de que el elemento existe y tiene un objeto 3D
-
-                    let currentX = ref.object3D.position.x;
-
-                    if (rowData.direction) { // True = derecha
-                        currentX += rowData.speed * delta;
-                        if (currentX > endOfRow) {
-                            currentX = beginningOfRow;
-                        }
-                    } else { // False = izquierda
-                        currentX -= rowData.speed * delta;
-                        if (currentX < beginningOfRow) {
-                            currentX = endOfRow;
-                        }
-                    }
-                    ref.object3D.position.x = currentX;
-                });
-            }
-        });
+function generateRows(amount) {
+    const rows = [];
+    for (let i = 0; i < amount; i++) {
+        const rowData = generateRow();
+        rows.push(rowData);
     }
-});
+    return rows;
+}
 
-gameMapEl.setAttribute('vehicle-animator', ''); // Asignar el animador al mapa
+function generateRow() {
+    const type = randomElement(["car", "truck", "forest"]);
+    if (type === "car") return generateCarLaneMetadata();
+    if (type === "truck") return generateTruckLaneMetadata();
+    return generateForesMetadata();
+}
 
-// Hit Test (requiere un componente de detección de colisiones de A-Frame o manual)
-AFRAME.registerComponent('hit-detector', {
-    tick: function () {
-        const playerBox = new THREE.Box3().setFromObject(playerEl.object3D);
+function randomElement(array) {
+    return array[Math.floor(Math.random() * array.length)];
+}
 
-        const row = metadata[position.currentRow - 1]; // Fila actual
-        if (!row || (row.type !== 'car' && row.type !== 'truck')) return;
+function generateForesMetadata() {
+    const occupiedTiles = new Set();
+    const trees = Array.from({ length: 4 }, () => {
+        let tileIndex;
+        do {
+            tileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
+        } while (occupiedTiles.has(tileIndex));
+        occupiedTiles.add(tileIndex);
+
+        const height = randomElement([20, 45, 60]);
+
+        return { tileIndex, height };
+    });
+
+    return { type: "forest", trees };
+}
+
+function generateCarLaneMetadata() {
+    const direction = randomElement([true, false]);
+    const speed = randomElement([100, 125, 150]);
+
+    const occupiedTiles = new Set();
+
+    const vehicles = Array.from({ length: 3 }, () => {
+        let initialTileIndex;
+        do {
+            initialTileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
+        } while (occupiedTiles.has(initialTileIndex));
+        occupiedTiles.add(initialTileIndex - 1);
+        occupiedTiles.add(initialTileIndex);
+        occupiedTiles.add(initialTileIndex + 1);
+
+        const color = randomElement([0xa52523, 0xbdb638, 0x78b14b]);
+
+        return { initialTileIndex, color };
+    });
+
+    return { type: "car", direction, speed, vehicles };
+}
+
+function generateTruckLaneMetadata() {
+    const direction = randomElement([true, false]);
+    const speed = randomElement([100, 125, 150]);
+
+    const occupiedTiles = new Set();
+
+    const vehicles = Array.from({ length: 2 }, () => {
+        let initialTileIndex;
+        do {
+            initialTileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
+        } while (occupiedTiles.has(initialTileIndex));
+        occupiedTiles.add(initialTileIndex - 2);
+        occupiedTiles.add(initialTileIndex - 1);
+        occupiedTiles.add(initialTileIndex);
+        occupiedTiles.add(initialTileIndex + 1);
+        occupiedTiles.add(initialTileIndex + 2);
+
+        const color = randomElement([0xa52523, 0xbdb638, 0x78b14b]);
+
+        return { initialTileIndex, color };
+    });
+
+    return { type: "truck", direction, speed, vehicles };
+}
+
+function animatePlayer() {
+    if (!movesQueue.length) return;
+
+    if (!moveClock.running) moveClock.start();
+
+    const stepTime = 0.2; // Seconds it takes to take a step
+    const progress = Math.min(1, moveClock.getElapsedTime() / stepTime);
+
+    setPosition(progress);
+    setRotation(progress);
+
+    // Once a step has ended
+    if (progress >= 1) {
+        stepCompleted();
+        moveClock.stop();
+    }
+}
+
+function setPosition(progress) {
+    const startX = position.currentTile * tileSize;
+    const startY = position.currentRow * tileSize;
+    let endX = startX;
+    let endY = startY;
+
+    if (movesQueue[0] === "left") endX -= tileSize;
+    if (movesQueue[0] === "right") endX += tileSize;
+    if (movesQueue[0] === "forward") endY += tileSize;
+    if (movesQueue[0] === "backward") endY -= tileSize;
+
+    player.position.x = THREE.MathUtils.lerp(startX, endX, progress);
+    player.position.y = THREE.MathUtils.lerp(startY, endY, progress);
+    player.children[0].position.z = Math.sin(progress * Math.PI) * 8;
+}
+
+function setRotation(progress) {
+    let endRotation = 0;
+    if (movesQueue[0] == "forward") endRotation = 0;
+    if (movesQueue[0] == "left") endRotation = Math.PI / 2;
+    if (movesQueue[0] == "right") endRotation = -Math.PI / 2;
+    if (movesQueue[0] == "backward") endRotation = Math.PI;
+
+    player.children[0].rotation.z = THREE.MathUtils.lerp(
+        player.children[0].rotation.z,
+        endRotation,
+        progress
+    );
+}
+
+function animateVehicles() {
+    const delta = gameClock.getDelta();
+
+    metadata.forEach((rowData) => {
+        if (rowData.type === "car" || rowData.type === "truck") {
+            const beginningOfRow = (minTileIndex - 2) * tileSize;
+            const endOfRow = (maxTileIndex + 2) * tileSize;
+
+            rowData.vehicles.forEach(({ ref }) => {
+                if (!ref) throw Error("Vehicle reference is missing");
+
+                if (rowData.direction) {
+                    ref.position.x =
+                        ref.position.x > endOfRow
+                            ? beginningOfRow
+                            : ref.position.x + rowData.speed * delta;
+                } else {
+                    ref.position.x =
+                        ref.position.x < beginningOfRow
+                            ? endOfRow
+                            : ref.position.x - rowData.speed * delta;
+                }
+            });
+        }
+    });
+}
+
+function hitTest() {
+    const row = metadata[position.currentRow - 1];
+    if (!row) return;
+
+    if (row.type === "car" || row.type === "truck") {
+        const playerBoundingBox = new THREE.Box3();
+        playerBoundingBox.setFromObject(player);
 
         row.vehicles.forEach(({ ref }) => {
-            if (!ref || !ref.object3D) return;
+            if (!ref) throw Error("Vehicle reference is missing");
 
-            const vehicleBox = new THREE.Box3().setFromObject(ref.object3D);
+            const vehicleBoundingBox = new THREE.Box3();
+            vehicleBoundingBox.setFromObject(ref);
 
-            if (playerBox.intersectsBox(vehicleBox)) {
-                console.log("¡Colisión!");
-                // Aquí, en un juego real, activarías la pantalla de Game Over en VR
-                // Por ahora, solo loguea y reinicia (o muestra un mensaje de texto 3D)
-                // alert(`Game Over! Score: ${position.currentRow}`);
-                // Si quieres un UI 3D:
-                // const resultContainerEl = document.querySelector('#result-container-vr');
-                // if (resultContainerEl) resultContainerEl.setAttribute('visible', 'true');
-                // const finalScoreText = document.querySelector('#final-score-vr');
-                // if (finalScoreText) finalScoreText.setAttribute('value', `Your score: ${position.currentRow}`);
-
-                // Reiniciar el juego
-                setTimeout(() => initializeGame(), 1000); // Pequeño retraso
+            if (playerBoundingBox.intersectsBox(vehicleBoundingBox)) {
+                if (!resultDOM || !finalScoreDOM) return;
+                resultDOM.style.visibility = "visible";
+                finalScoreDOM.innerText = position.currentRow.toString();
+                // Pause game logic on game over
+                renderer.setAnimationLoop(null);
+                if (backgroundMusic) backgroundMusic.pause();
             }
         });
     }
-});
+}
 
-rigEl.setAttribute('hit-detector', ''); // Asignar el detector de colisiones al rig
+function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a1a); // Set a background color for the VR scene
 
-// --- Event Listeners para el movimiento (adaptados para VR) ---
+    player = Player();
+    scene.add(player); // Player is now directly in the scene
 
-// Para el Meta Quest 3, la interacción principal vendría de los controladores o el hand tracking.
-// Aquí te dejo una simulación con un "click" en el ratón que dispara el movimiento del jugador.
-// En un entorno real de Quest, usarías eventos de 'triggerdown' de los `laser-controls` o `oculus-touch-controls`.
+    map = new THREE.Group();
+    scene.add(map);
 
-document.getElementById('player-camera').addEventListener('click', function (evt) {
-    // Esto es muy simplificado: simula un click en el mundo para mover hacia adelante
-    // En un juego real, tendrías botones 3D o input del controlador.
-    const forwardBtn = document.querySelector('a-plane[position="0 1 -2"] a-box.collidable');
-    if (evt.target === forwardBtn) {
-        rigEl.emit('player-move', { direction: "forward" });
-    }
-    // Añade lógica para otros botones si los creas
-});
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Softer ambient light
+    scene.add(ambientLight);
 
-// También puedes mapear teclas para pruebas en desktop, pero no para VR final
-window.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowUp") {
-        event.preventDefault();
-        rigEl.emit('player-move', { direction: "forward" });
-    } else if (event.key === "ArrowDown") {
-        event.preventDefault();
-        rigEl.emit('player-move', { direction: "backward" });
-    } else if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        rigEl.emit('player-move', { direction: "left" });
-    } else if (event.key === "ArrowRight") {
-        event.preventDefault();
-        rigEl.emit('player-move', { direction: "right" });
-    }
-});
+    const dirLight = DirectionalLight();
+    // In VR, the directional light can follow the player's general area
+    dirLight.target = player;
+    scene.add(dirLight); // Add directly to scene, not player, for consistent lighting
 
-// Iniciar el juego
-document.querySelector('a-scene').addEventListener('loaded', function () {
+    camera = Camera();
+    // Camera is now directly in the scene or managed by WebXR
+
+    renderer = Renderer();
+    document.getElementById("vr-button-container").appendChild(VRButton.createButton(renderer));
+
+    scoreDOM = document.getElementById("score");
+    resultDOM = document.getElementById("result-container");
+    finalScoreDOM = document.getElementById("final-score");
+    gameControlsDOM = document.getElementById("game-controls");
+    backgroundMusic = document.getElementById("backgroundMusic");
+
+
+    // Event listener for VR session start/end to toggle controls
+    renderer.xr.addEventListener('sessionstart', function () {
+        console.log('VR Session Started');
+        gameControlsDOM.classList.add('active'); // Show buttons in VR
+        if (backgroundMusic) backgroundMusic.play();
+    });
+
+    renderer.xr.addEventListener('sessionend', function () {
+        console.log('VR Session Ended');
+        gameControlsDOM.classList.remove('active'); // Hide buttons outside VR
+        if (backgroundMusic) backgroundMusic.pause();
+    });
+
+    // Control buttons for movement
+    document.getElementById("forward")?.addEventListener("click", () => queueMove("forward"));
+    document.getElementById("backward")?.addEventListener("click", () => queueMove("backward"));
+    document.getElementById("left")?.addEventListener("click", () => queueMove("left"));
+    document.getElementById("right")?.addEventListener("click", () => queueMove("right"));
+
+    // Keyboard controls as fallback/alternative (still useful for development)
+    window.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowUp") {
+            event.preventDefault();
+            queueMove("forward");
+        } else if (event.key === "ArrowDown") {
+            event.preventDefault();
+            queueMove("backward");
+        } else if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            queueMove("left");
+        } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            queueMove("right");
+        }
+    });
+
+    document.querySelector("#retry")?.addEventListener("click", initializeGame);
+
     initializeGame();
-});
 
-// Música de fondo (si el navegador lo permite sin interacción del usuario)
-document.addEventListener('DOMContentLoaded', () => {
-    const backgroundMusic = document.getElementById('backgroundMusic');
+    // Start the animation loop for WebXR
+    renderer.setAnimationLoop(animate);
+}
+
+function initializeGame() {
+    initializePlayer();
+    initializeMap();
+
+    if (scoreDOM) scoreDOM.innerText = "0";
+    if (resultDOM) resultDOM.style.visibility = "hidden";
     if (backgroundMusic) {
-        // La reproducción automática a menudo requiere una interacción del usuario primero
-        // Podrías tener un botón "Start Game" en VR que también inicie la música.
-        backgroundMusic.volume = 0.3; // Ajusta el volumen
-        backgroundMusic.play().catch(e => console.log("Música no pudo reproducirse automáticamente:", e));
+        backgroundMusic.currentTime = 0; // Rewind music
+        // Only play if in VR or not in VR (if not in VR, it might auto-play,
+        // but explicit play() might be blocked by browser policies if not user-initiated)
+        if (renderer.xr.isPresenting) {
+            backgroundMusic.play();
+        } else {
+            // For desktop, usually an initial user interaction is needed to play audio
+            // You might need to add a "Start Game" button for desktop to ensure audio plays
+        }
     }
-});
+
+    // Re-enable animation loop on retry
+    renderer.setAnimationLoop(animate);
+}
+
+function animate() {
+    animateVehicles();
+    animatePlayer();
+    hitTest();
+
+    // The camera position is now relative to the player's position in the game world.
+    // In VR, the XR camera will handle the head movement, but we want the "game camera"
+    // to follow the player object in the 3D scene.
+    // The player object acts as the "root" for the VR experience.
+    const playerWorldPosition = new THREE.Vector3();
+    player.getWorldPosition(playerWorldPosition);
+    
+    // Adjust camera position for a third-person view behind the player.
+    // These values might need tweaking for optimal VR comfort and perspective.
+    camera.position.set(
+        playerWorldPosition.x,
+        playerWorldPosition.y - 100, // Slightly behind the player
+        playerWorldPosition.z + 150  // Above the player
+    );
+    camera.lookAt(playerWorldPosition);
+
+    renderer.render(scene, camera);
+}
+
+// Initialize the Three.js scene and game
+init();
