@@ -23,19 +23,13 @@ const moveClock = new THREE.Clock(false);
 const gameClock = new THREE.Clock();
 
 function Camera() {
-    // In VR, the camera will be managed by WebXR, but we'll still define a perspective camera
-    // for initial setup and potential non-VR fallback. For an immersive experience,
-    // the perspective camera is more suitable than orthographic.
     const fov = 75;
     const aspect = window.innerWidth / window.innerHeight;
     const near = 0.1;
     const far = 1000;
     const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
 
-    // Initial position for the camera, relative to the player in VR
-    camera.position.set(0, -100, 150); // Adjusted for a better "over-the-shoulder" view in VR
-    camera.lookAt(0, 0, 0); // Look at the origin initially
-
+    // Initial position for the camera will be set in the animate function for third-person view.
     return camera;
 }
 
@@ -793,21 +787,26 @@ function animate() {
     animatePlayer();
     hitTest();
 
-    // The camera position is now relative to the player's position in the game world.
-    // In VR, the XR camera will handle the head movement, but we want the "game camera"
-    // to follow the player object in the 3D scene.
-    // The player object acts as the "root" for the VR experience.
+    // Get the player's world position
     const playerWorldPosition = new THREE.Vector3();
     player.getWorldPosition(playerWorldPosition);
     
-    // Adjust camera position for a third-person view behind the player.
-    // These values might need tweaking for optimal VR comfort and perspective.
+    // Third-person camera position relative to the player
+    // The camera is placed behind and slightly above the player.
+    // These values are tuned to provide a good third-person view without needing to look up.
+    const cameraOffsetX = 0; // No horizontal offset from player
+    const cameraOffsetY = -150; // Camera is 150 units behind the player (along the Y-axis, as Y is forward in your game)
+    const cameraOffsetZ = 100; // Camera is 100 units above the player (along the Z-axis)
+
     camera.position.set(
-        playerWorldPosition.x,
-        playerWorldPosition.y - 100, // Slightly behind the player
-        playerWorldPosition.z + 150  // Above the player
+        playerWorldPosition.x + cameraOffsetX,
+        playerWorldPosition.y + cameraOffsetY,
+        playerWorldPosition.z + cameraOffsetZ
     );
-    camera.lookAt(playerWorldPosition);
+
+    // Make the camera look at the player's position
+    camera.lookAt(playerWorldPosition.x, playerWorldPosition.y, playerWorldPosition.z + 20); // Look slightly above the player's base to center the view
+
 
     renderer.render(scene, camera);
 }
