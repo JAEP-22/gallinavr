@@ -1,36 +1,26 @@
 <!DOCTYPE html>
-<html lang="en" >
+<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Gallina Turuleca</title>
-    <link rel="stylesheet" href="./style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crossy Road VR</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <audio id="backgroundMusic" loop autoplay>
-        <source src="./carnoise.mp3" type="audio/mpeg">
-        Tu navegador no soporta la reproducción de audio.
-    </audio>
-    <canvas class="game"></canvas>
-    <div id="controls">
-        <div>
-            <button id="forward">▲</button>
-            <button id="left">◀</button>
-            <button id="backward">▼</button>
-            <button id="right">▶</button>
+    <div id="game-container">
+        <canvas class="game"></canvas>
+        <div id="ui-overlay">
+            <div id="score-container">Puntuación: <span id="score">0</span></div>
+            <div id="result-container">
+                <h2>¡Juego Terminado!</h2>
+                <p>Tu puntuación final: <span id="final-score">0</span></p>
+                <button id="retry">Reintentar</button>
+            </div>
         </div>
     </div>
-    <div id="score">0</div>
-    <div id="result-container">
-        <div id="result">
-            <h1>Game Over</h1>
-            <p>Your score: <span id="final-score"></span></p>
-            <button id="retry">Retry</button>
+    <div id="vr-button-container">
         </div>
-    </div>
 
-    <div id="youtube-card">
-        This proyect isn't made by my self (me Jose Pablo), i just only follow a web tutorial to create it, the original one is made by Hunor Marthon Borbely
-    </div>
-    <script type="module" src="./script.js"></script>
+    <script type="module" src="script.js"></script>
 </body>
 </html>
