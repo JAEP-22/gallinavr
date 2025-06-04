@@ -795,8 +795,8 @@ function animate() {
     // The camera is placed behind and slightly above the player.
     // These values are tuned to provide a good third-person view without needing to look up.
     const cameraOffsetX = -90; // No horizontal offset from player
-    const cameraOffsetY = 50; // Camera is 150 units behind the player (along the Y-axis, as Y is forward in your game)
-    const cameraOffsetZ = -100; // Camera is 100 units above the player (along the Z-axis)
+    const cameraOffsetY = 0; // Camera is 150 units behind the player (along the Y-axis, as Y is forward in your game)
+    const cameraOffsetZ = 0; // Camera is 100 units above the player (along the Z-axis)
 
     camera.position.set(
         playerWorldPosition.x + cameraOffsetX,
